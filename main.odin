@@ -15,42 +15,6 @@ Vec3 :: [3]f32
 Vec4 :: [4]f32
 Mat4 :: matrix[4, 4]f32
 
-VERTEX_SOURCE ::
-`
-#version 460 core
-
-layout (location = 0) in vec3 in_position;
-layout (location = 1) in vec3 in_normal;
-layout (location = 2) in vec2 in_uv;
-
-out vec2 UV;
-
-uniform mat4 projection;
-uniform mat4 view;
-uniform mat4 model;
-
-void main() {
-	UV = in_uv;
-	gl_Position = projection * view * model * vec4(in_position, 1.0);
-}
-`
-
-FRAGMENT_SOURCE ::
-`
-#version 460 core
-
-in vec2 UV;
-
-out vec4 out_color;
-
-uniform vec4 color;
-layout (binding = 0) uniform sampler2D texture0;
-
-void main() {
-	out_color = texture(texture0, UV) * color;
-}
-`
-
 Cube_Vertex :: struct {
 	position: Vec3,
 	normal: Vec3,
@@ -178,7 +142,7 @@ main :: proc() {
 	if !texture_ok do log.panic("Failed to create the texture.")
 	defer glue.destroy_texture(&texture)
 
-	shader, shader_ok := glue.create_shader(VERTEX_SOURCE, FRAGMENT_SOURCE)
+	shader, shader_ok := glue.create_shader(#load("shaders/cube.vert"), #load("shaders/cube.frag"))
 	if !shader_ok do log.panic("Failed to compile the shader.")
 	defer glue.destroy_shader(shader)
 
