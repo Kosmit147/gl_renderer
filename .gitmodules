@@ -1,3 +1,6 @@
 [submodule "glue"]
 	path = glue
 	url = https://github.com/Kosmit147/glue.git
+[submodule "vendor/tinyobjloader"]
+	path = vendor/tinyobjloader
+	url = https://github.com/Kosmit147/tinyobjloader_odin.git
