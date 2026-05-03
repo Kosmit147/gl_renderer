@@ -165,17 +165,14 @@ main :: proc() {
 
 	gl.Enable(gl.DEPTH_TEST)
 
-	vertex_array: glue.Vertex_Array
-	glue.create_vertex_array(&vertex_array)
-	defer glue.destroy_vertex_array(&vertex_array)
-
-	vertex_buffer: glue.Gl_Buffer
-	glue.create_static_gl_buffer_with_data(&vertex_buffer, slice.to_bytes(cube_vertices[:]))
-	defer glue.destroy_gl_buffer(&vertex_buffer)
-
-	index_buffer: glue.Gl_Buffer
-	glue.create_static_gl_buffer_with_data(&index_buffer, slice.to_bytes(cube_indices[:]))
-	defer glue.destroy_gl_buffer(&index_buffer)
+	cube_mesh: glue.Mesh
+	glue.create_mesh(mesh = &cube_mesh,
+			 vertices = slice.to_bytes(cube_vertices[:]),
+			 vertex_stride = size_of(Cube_Vertex),
+			 vertex_format = cube_vertex_format[:],
+			 indices = slice.to_bytes(cube_indices[:]),
+			 index_type = glue.gl_index(Cube_Index))
+	defer glue.destroy_mesh(&cube_mesh)
 
 	texture, texture_ok := glue.create_texture_from_jpeg_in_memory(#load("textures/container.jpg"))
 	if !texture_ok do log.panic("Failed to create the texture.")
@@ -195,10 +192,7 @@ main :: proc() {
 	projection_uniform := glue.get_uniform(shader, "projection", Mat4)
 	color_uniform := glue.get_uniform(shader, "color", Vec4)
 
-	glue.bind_vertex_array(vertex_array)
-	glue.set_vertex_array_format(vertex_array, cube_vertex_format[:])
-	glue.bind_vertex_buffer(vertex_array, vertex_buffer, size_of(Cube_Vertex))
-	glue.bind_index_buffer(vertex_array, index_buffer)
+	glue.bind_mesh(cube_mesh)
 	glue.bind_texture(texture, 0)
 	glue.use_shader(shader)
 
@@ -259,7 +253,10 @@ main :: proc() {
 		glue.set_uniform(shader, projection_uniform, projection)
 
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
-		gl.DrawElements(gl.TRIANGLES, len(cube_indices), glue.gl_index(Cube_Index), nil)
+		gl.DrawElements(gl.TRIANGLES,
+				i32(cube_mesh.vertex_count),
+				cube_mesh.index_type,
+				rawptr(uintptr(cube_mesh.index_data_offset)))
 
 		glue.end_frame()
 		free_all(context.temp_allocator)
