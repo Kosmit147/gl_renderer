@@ -33,6 +33,14 @@ vertex_3d_format := [?]glue.Vertex_Attribute{
 	.Float_2,
 }
 
+MODEL_UNIFORM :: glue.Uniform(Mat4) { location = 0 }
+COLOR_UNIFORM :: glue.Uniform(Vec4) { location = 5 }
+
+Mvp_Buffer_Data :: struct {
+	view: Mat4,
+	projection: Mat4,
+}
+
 WINDOW_TITLE  :: "GL Renderer"
 WINDOW_WIDTH  :: 1920
 WINDOW_HEIGHT :: 1080
@@ -93,24 +101,29 @@ main :: proc() {
 	if !texture_ok do log.panic("Failed to create the texture.")
 	defer glue.destroy_texture(&texture)
 
+	mvp_buffer: glue.Gl_Buffer
+	glue.create_static_gl_buffer(&mvp_buffer, size_of(Mvp_Buffer_Data))
+	defer glue.destroy_gl_buffer(&mvp_buffer)
+	glue.bind_uniform_buffer(mvp_buffer, 0)
+
 	lit_shader, lit_shader_ok := glue.create_shader(#load("shaders/lit.vert"), #load("shaders/lit.frag"))
 	if !lit_shader_ok do log.panic("Failed to compile the lit shader.")
 	defer glue.destroy_shader(lit_shader)
+
+	unlit_shader, unlit_shader_ok := glue.create_shader(#load("shaders/unlit.vert"), #load("shaders/unlit.frag"))
+	if !unlit_shader_ok do log.panic("Failed to compile the unlit shader.")
+	defer glue.destroy_shader(unlit_shader)
 
 	camera := glue.Camera {
 		position = { 0, 0, 2 },
 		yaw = math.to_radians(f32(-90.0)),
 	}
 
-	model_uniform := glue.get_uniform(lit_shader, "model", Mat4)
-	view_uniform := glue.get_uniform(lit_shader, "view", Mat4)
-	projection_uniform := glue.get_uniform(lit_shader, "projection", Mat4)
-	tint_uniform := glue.get_uniform(lit_shader, "tint", Vec4)
-
 	clear_color := glue.BLACK
 	set_clear_color(clear_color)
-	tint := glue.WHITE
-	glue.set_uniform(lit_shader, tint_uniform, tint)
+	color := glue.WHITE
+	glue.set_uniform(lit_shader, COLOR_UNIFORM, color)
+	glue.set_uniform(unlit_shader, COLOR_UNIFORM, color)
 
 	prev_time := glue.time()
 
@@ -131,7 +144,10 @@ main :: proc() {
 
 		imgui.Begin("Window")
 		if imgui.ColorEdit4("Clear color", &clear_color) do set_clear_color(clear_color)
-		if imgui.ColorEdit4("Tint", &tint) do glue.set_uniform(lit_shader, tint_uniform, tint)
+		if imgui.ColorEdit4("Color", &color) {
+			glue.set_uniform(lit_shader, COLOR_UNIFORM, color)
+			glue.set_uniform(unlit_shader, COLOR_UNIFORM, color)
+		}
 		imgui.End()
 
 		if !glue.cursor_enabled() {
@@ -152,9 +168,6 @@ main :: proc() {
 
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
-		glue.bind_texture(texture, 0)
-		glue.use_shader(lit_shader)
-
 		view := linalg.matrix4_look_at(eye = camera.position,
 					       centre = camera.position + camera_vectors.forward,
 					       up = camera_vectors.up)
@@ -162,12 +175,17 @@ main :: proc() {
 							 aspect = glue.window_aspect_ratio(),
 							 near = 0.1,
 							 far = 1000)
-		glue.set_uniform(lit_shader, view_uniform, view)
-		glue.set_uniform(lit_shader, projection_uniform, projection)
+		mvp_buffer_data := Mvp_Buffer_Data {
+			view = view,
+			projection = projection,
+		}
+		glue.upload_static_gl_buffer_data(mvp_buffer, mem.any_to_bytes(mvp_buffer_data))
 
 		{
+			glue.bind_texture(texture, 0)
+			glue.use_shader(lit_shader)
 			model: Mat4 = 1
-			glue.set_uniform(lit_shader, model_uniform, model)
+			glue.set_uniform(lit_shader, MODEL_UNIFORM, model)
 
 			glue.bind_mesh(cube_mesh)
 			gl.DrawElements(gl.TRIANGLES,
@@ -177,8 +195,10 @@ main :: proc() {
 		}
 
 		{
+			glue.bind_texture(texture, 0)
+			glue.use_shader(unlit_shader)
 			model := linalg.matrix4_translate(Vec3{ 10, 1, 10 })
-			glue.set_uniform(lit_shader, model_uniform, model)
+			glue.set_uniform(unlit_shader, MODEL_UNIFORM, model)
 
 			glue.bind_mesh(sphere_mesh)
 			gl.DrawElements(gl.TRIANGLES,
