@@ -8,33 +8,30 @@ import "core:log"
 import "core:slice"
 import "core:math"
 import "core:math/linalg"
+import "core:mem"
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
 Vec4 :: [4]f32
 Mat4 :: matrix[4, 4]f32
 
-Vertex :: struct {
-	position: Vec2,
-}
-
-@(rodata)
-vertex_format := [?]glue.Vertex_Attribute{
-	.Float_2,
-}
-
 VERTEX_SOURCE ::
 `
 #version 460 core
 
-layout (location = 0) in vec2 in_position;
+layout (location = 0) in vec3 in_position;
+layout (location = 1) in vec3 in_normal;
+layout (location = 2) in vec2 in_uv;
+
+out vec2 UV;
 
 uniform mat4 projection;
 uniform mat4 view;
 uniform mat4 model;
 
 void main() {
-	gl_Position = projection * view * model * vec4(in_position, 0.0, 1.0);
+	UV = in_uv;
+	gl_Position = projection * view * model * vec4(in_position, 1.0);
 }
 `
 
@@ -42,27 +39,94 @@ FRAGMENT_SOURCE ::
 `
 #version 460 core
 
-uniform vec4 color;
+in vec2 UV;
 
 out vec4 out_color;
 
+uniform vec4 color;
+layout (binding = 0) uniform sampler2D texture0;
+
 void main() {
-	out_color = color;
+	out_color = texture(texture0, UV) * color;
 }
 `
 
-@(rodata)
-quad_vertices := [4]Vertex{
-	{ position = { -0.5, -0.5 } },
-	{ position = { -0.5,  0.5 } },
-	{ position = {  0.5,  0.5 } },
-	{ position = {  0.5, -0.5 } },
+Cube_Vertex :: struct {
+	position: Vec3,
+	normal: Vec3,
+	uv: Vec2,
 }
 
-@(rodata)
-quad_indices := [6]u32{ 0, 1, 2, 0, 2, 3 }
+Cube_Index :: u8
 
-WINDOW_TITLE  :: "Example"
+@(rodata)
+cube_vertex_format := [?]glue.Vertex_Attribute{
+	.Float_3,
+	.Float_3,
+	.Float_2,
+}
+
+@(private="file", rodata)
+cube_vertices := [24]Cube_Vertex{
+	// Front wall.
+	{ position = { 0, 0, 1 }, normal = {  0,  0,  1 }, uv = { 0, 1 } },
+	{ position = { 1, 0, 1 }, normal = {  0,  0,  1 }, uv = { 1, 1 } },
+	{ position = { 1, 1, 1 }, normal = {  0,  0,  1 }, uv = { 1, 0 } },
+	{ position = { 0, 1, 1 }, normal = {  0,  0,  1 }, uv = { 0, 0 } },
+
+	// Back wall.
+	{ position = { 0, 0, 0 }, normal = {  0,  0, -1 }, uv = { 0, 1 } },
+	{ position = { 0, 1, 0 }, normal = {  0,  0, -1 }, uv = { 0, 0 } },
+	{ position = { 1, 1, 0 }, normal = {  0,  0, -1 }, uv = { 1, 0 } },
+	{ position = { 1, 0, 0 }, normal = {  0,  0, -1 }, uv = { 1, 1 } },
+
+	// Left wall.
+	{ position = { 0, 1, 1 }, normal = { -1,  0,  0 }, uv = { 1, 0 } },
+	{ position = { 0, 1, 0 }, normal = { -1,  0,  0 }, uv = { 0, 0 } },
+	{ position = { 0, 0, 0 }, normal = { -1,  0,  0 }, uv = { 0, 1 } },
+	{ position = { 0, 0, 1 }, normal = { -1,  0,  0 }, uv = { 1, 1 } },
+
+	// Right wall.
+	{ position = { 1, 1, 1 }, normal = {  1,  0,  0 }, uv = { 0, 0 } },
+	{ position = { 1, 0, 1 }, normal = {  1,  0,  0 }, uv = { 0, 1 } },
+	{ position = { 1, 0, 0 }, normal = {  1,  0,  0 }, uv = { 1, 1 } },
+	{ position = { 1, 1, 0 }, normal = {  1,  0,  0 }, uv = { 1, 0 } },
+
+	// Bottom wall.
+	{ position = { 0, 0, 0 }, normal = {  0, -1,  0 }, uv = { 0, 0 } },
+	{ position = { 1, 0, 0 }, normal = {  0, -1,  0 }, uv = { 1, 0 } },
+	{ position = { 1, 0, 1 }, normal = {  0, -1,  0 }, uv = { 1, 1 } },
+	{ position = { 0, 0, 1 }, normal = {  0, -1,  0 }, uv = { 0, 1 } },
+
+	// Top wall.
+	{ position = { 0, 1, 0 }, normal = {  0,  1,  0 }, uv = { 0, 0 } },
+	{ position = { 0, 1, 1 }, normal = {  0,  1,  0 }, uv = { 0, 1 } },
+	{ position = { 1, 1, 1 }, normal = {  0,  1,  0 }, uv = { 1, 1 } },
+	{ position = { 1, 1, 0 }, normal = {  0,  1,  0 }, uv = { 1, 0 } },
+}
+
+@(private="file", rodata)
+cube_indices := [36]Cube_Index{
+	// Front wall.
+	0, 1, 2, 0, 2, 3,
+
+	// Back wall.
+	4, 5, 6, 4, 6, 7,
+
+	// Left wall.
+	8, 9, 10, 8, 10, 11,
+
+	// Right wall.
+	12, 13, 14, 12, 14, 15,
+
+	// Bottom wall.
+	16, 17, 18, 16, 18, 19,
+
+	// Top wall.
+	20, 21, 22, 20, 22, 23,
+}
+
+WINDOW_TITLE  :: "GL Renderer"
 WINDOW_WIDTH  :: 1920
 WINDOW_HEIGHT :: 1080
 
@@ -70,23 +134,52 @@ main :: proc() {
 	context.logger = log.create_console_logger(.Debug when ODIN_DEBUG else .Info)
 	defer log.destroy_console_logger(context.logger)
 
+	when ODIN_DEBUG {
+		tracking_allocator: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&tracking_allocator, context.allocator)
+		context.allocator = mem.tracking_allocator(&tracking_allocator)
+		defer {
+			if len(tracking_allocator.allocation_map) > 0 {
+				log.errorf("MEMORY LEAK: %v allocations not freed:",
+					   len(tracking_allocator.allocation_map))
+				for _, entry in tracking_allocator.allocation_map {
+					log.errorf("- %v bytes at %v", entry.size, entry.location)
+				}
+			}
+			mem.tracking_allocator_destroy(&tracking_allocator)
+		}
+	}
+
 	if !glue.init(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE) do log.panic("Failed to create a window")
 	defer glue.deinit()
 
 	glue.set_cursor_enabled(false)
 	glue.set_raw_mouse_motion_enabled(true)
 
+	gl.CullFace(gl.BACK)
+	gl.FrontFace(gl.CCW)
+	gl.Enable(gl.CULL_FACE)
+
+	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+	gl.Enable(gl.BLEND)
+
+	gl.Enable(gl.DEPTH_TEST)
+
 	vertex_array: glue.Vertex_Array
 	glue.create_vertex_array(&vertex_array)
 	defer glue.destroy_vertex_array(&vertex_array)
 
 	vertex_buffer: glue.Gl_Buffer
-	glue.create_static_gl_buffer_with_data(&vertex_buffer, slice.to_bytes(quad_vertices[:]))
+	glue.create_static_gl_buffer_with_data(&vertex_buffer, slice.to_bytes(cube_vertices[:]))
 	defer glue.destroy_gl_buffer(&vertex_buffer)
 
 	index_buffer: glue.Gl_Buffer
-	glue.create_static_gl_buffer_with_data(&index_buffer, slice.to_bytes(quad_indices[:]))
+	glue.create_static_gl_buffer_with_data(&index_buffer, slice.to_bytes(cube_indices[:]))
 	defer glue.destroy_gl_buffer(&index_buffer)
+
+	texture, texture_ok := glue.create_texture_from_jpeg_in_memory(#load("textures/container.jpg"))
+	if !texture_ok do log.panic("Failed to create the texture.")
+	defer glue.destroy_texture(&texture)
 
 	shader, shader_ok := glue.create_shader(VERTEX_SOURCE, FRAGMENT_SOURCE)
 	if !shader_ok do log.panic("Failed to compile the shader.")
@@ -103,9 +196,10 @@ main :: proc() {
 	color_uniform := glue.get_uniform(shader, "color", Vec4)
 
 	glue.bind_vertex_array(vertex_array)
-	glue.set_vertex_array_format(vertex_array, vertex_format[:])
-	glue.bind_vertex_buffer(vertex_array, vertex_buffer, size_of(Vertex))
+	glue.set_vertex_array_format(vertex_array, cube_vertex_format[:])
+	glue.bind_vertex_buffer(vertex_array, vertex_buffer, size_of(Cube_Vertex))
 	glue.bind_index_buffer(vertex_array, index_buffer)
+	glue.bind_texture(texture, 0)
 	glue.use_shader(shader)
 
 	clear_color := glue.BLACK
@@ -164,8 +258,8 @@ main :: proc() {
 		glue.set_uniform(shader, view_uniform, view)
 		glue.set_uniform(shader, projection_uniform, projection)
 
-		gl.Clear(gl.COLOR_BUFFER_BIT)
-		gl.DrawElements(gl.TRIANGLES, len(quad_indices), glue.gl_index(u32), nil)
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		gl.DrawElements(gl.TRIANGLES, len(cube_indices), glue.gl_index(Cube_Index), nil)
 
 		glue.end_frame()
 		free_all(context.temp_allocator)
