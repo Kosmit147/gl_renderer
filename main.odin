@@ -5,15 +5,12 @@ import "base:runtime"
 import "glue"
 import imgui "glue/vendor/imgui"
 import gl "vendor:OpenGL"
-import tinyobj "vendor/tinyobjloader"
 
-import "core:c"
 import "core:log"
 import "core:slice"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
-import "core:os"
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -84,16 +81,14 @@ main :: proc() {
 
 	gl.Enable(gl.DEPTH_TEST)
 
-	cube_mesh: glue.Mesh
-	glue.create_mesh(mesh = &cube_mesh,
-			 vertices = slice.to_bytes(cube_vertices[:]),
-			 vertex_stride = size_of(Vertex_3D),
-			 vertex_format = vertex_3d_format[:],
-			 indices = slice.to_bytes(cube_indices[:]),
-			 index_type = glue.gl_index(Cube_Index))
+	cube_mesh := glue.create_mesh(vertices = slice.to_bytes(cube_vertices[:]),
+				      vertex_stride = size_of(Vertex_3D),
+				      vertex_format = vertex_3d_format[:],
+				      indices = slice.to_bytes(cube_indices[:]),
+				      index_type = glue.gl_index(Cube_Index))
 	defer glue.destroy_mesh(&cube_mesh)
 
-	sphere_mesh, sphere_mesh_ok := create_mesh_from_obj("models/sphere.obj")
+	sphere_mesh, sphere_mesh_ok := glue.create_mesh_from_obj("models/sphere.obj")
 	if !sphere_mesh_ok do log.panic("Failed to load the sphere model.")
 	defer glue.destroy_mesh(&sphere_mesh)
 
@@ -214,97 +209,4 @@ main :: proc() {
 
 set_clear_color :: proc(color: Vec4) {
 	gl.ClearColor(color.r, color.g, color.b, color.a)
-}
-
-create_mesh_from_obj :: proc(file_path: cstring) -> (mesh: glue.Mesh, ok := false) {
-	file_reader :: proc "c" (ctx: rawptr,
-				 filename: cstring,
-				 is_mtl: c.int,
-				 obj_filename: cstring,
-				 buf: ^[^]c.char,
-				 buf_len: ^c.size_t) {
-		context = g_context
-		data, error := os.read_entire_file(cast(string)obj_filename, context.temp_allocator)
-		if error != nil {
-			log.errorf("Failed to read model file `%v`: %v", obj_filename, error)
-			buf^ = nil
-			buf_len^ = 0
-			return
-		}
-		buf^ = raw_data(data)
-		buf_len^ = len(data)
-		return
-	}
-
-	attrib: tinyobj.attrib_t
-	shapes_data: [^]tinyobj.shape_t
-	num_shapes: uint
-	materials_data: [^]tinyobj.material_t
-	num_materials: uint
-
-	if tinyobj.parse_obj(attrib = &attrib,
-			     shapes = &shapes_data,
-			     num_shapes = &num_shapes,
-			     materials = &materials_data,
-			     num_materials = &num_materials,
-			     file_name = file_path,
-			     file_reader = file_reader,
-			     ctx = nil,
-			     flags = tinyobj.FLAG_TRIANGULATE) != tinyobj.SUCCESS {
-		return
-	}
-	defer {
-		tinyobj.attrib_free(&attrib)
-		tinyobj.shapes_free(shapes_data, num_shapes)
-		tinyobj.materials_free(materials_data, num_materials)
-	}
-
-	Mesh_Vertex :: Vertex_3D
-	Mesh_Index :: u32
-	mesh_vertex_format := vertex_3d_format
-
-	vertices := make([dynamic]Mesh_Vertex, context.temp_allocator)
-	indices := make([dynamic]Mesh_Index, context.temp_allocator)
-
-	num_triangles := attrib.num_face_num_verts
-	model_vertices := attrib.faces[:num_triangles * 3]
-	unique_vertex_indices := make(map[Mesh_Vertex]Mesh_Index, context.temp_allocator)
-	for vertex in model_vertices {
-		vertex := Mesh_Vertex {
-			position = Vec3{
-				attrib.vertices[vertex.v_idx * 3 + 0],
-				attrib.vertices[vertex.v_idx * 3 + 1],
-				attrib.vertices[vertex.v_idx * 3 + 2],
-			},
-			normal = Vec3{
-				attrib.normals[vertex.vn_idx * 3 + 0],
-				attrib.normals[vertex.vn_idx * 3 + 1],
-				attrib.normals[vertex.vn_idx * 3 + 2],
-			},
-			uv = Vec2{
-				attrib.texcoords[vertex.vt_idx * 2 + 0],
-				attrib.texcoords[vertex.vt_idx * 2 + 1],
-			},
-		}
-
-		if vertex_index, vertex_index_ok := unique_vertex_indices[vertex]; vertex_index_ok {
-			append(&indices, vertex_index)
-		} else {
-			vertex_index = cast(Mesh_Index)len(unique_vertex_indices)
-			unique_vertex_indices[vertex] = vertex_index
-			append(&vertices, vertex)
-			append(&indices, vertex_index)
-		}
-	}
-
-	glue.create_mesh(mesh = &mesh,
-			 vertices = slice.to_bytes(vertices[:]),
-			 vertex_stride = size_of(Mesh_Vertex),
-			 vertex_format = mesh_vertex_format[:],
-			 indices = slice.to_bytes(indices[:]),
-			 index_type = glue.gl_index(Mesh_Index))
-	defer if !ok do glue.destroy_mesh(&mesh)
-
-	ok = true
-	return
 }
