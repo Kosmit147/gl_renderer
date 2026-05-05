@@ -5,6 +5,7 @@ import "base:runtime"
 import "glue"
 import imgui "glue/vendor/imgui"
 import gl "vendor:OpenGL"
+import "gizmo"
 
 import "core:log"
 import "core:slice"
@@ -16,6 +17,7 @@ Vec2 :: [2]f32
 Vec3 :: [3]f32
 Vec4 :: [4]f32
 Mat4 :: matrix[4, 4]f32
+Quat :: quaternion128
 
 Vertex_3D :: struct {
 	position: Vec3,
@@ -66,7 +68,9 @@ main :: proc() {
 
 	g_context = context
 
-	if !glue.init(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE) do log.panic("Failed to create a window")
+	if !glue.init(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, maximized = true) {
+		log.panic("Failed to create a window")
+	}
 	defer glue.deinit()
 
 	glue.set_cursor_enabled(false)
@@ -80,6 +84,48 @@ main :: proc() {
 	gl.Enable(gl.BLEND)
 
 	gl.Enable(gl.DEPTH_TEST)
+
+	gizmo.init()
+	defer gizmo.deinit()
+
+	gizmo_quads_vertex_format := []glue.Vertex_Attribute{ .Float_3, .Float_4 }
+	gizmo_rings_vertex_format := []glue.Vertex_Attribute{ .Float_3, .Float_4 }
+
+	gizmo_quads_va: glue.Vertex_Array
+	gizmo_quads_vb: glue.Gl_Buffer
+	// gizmo_quads_ib: glue.Gl_Buffer
+	glue.create_vertex_array(&gizmo_quads_va)
+	defer glue.destroy_vertex_array(&gizmo_quads_va)
+	glue.create_dynamic_gl_buffer(&gizmo_quads_vb)
+	defer glue.destroy_gl_buffer(&gizmo_quads_vb)
+	// glue.create_dynamic_gl_buffer(&gizmo_quads_ib)
+	// defer glue.destroy_gl_buffer(&gizmo_quads_ib)
+	glue.set_vertex_array_format(gizmo_quads_va, gizmo_quads_vertex_format)
+	glue.bind_vertex_buffer(gizmo_quads_va, gizmo_quads_vb, size_of(gizmo.Triangle_Vertex))
+	// glue.bind_index_buffer(gizmo_quads_va, gizmo_quads_ib)
+
+	gizmo_rings_va: glue.Vertex_Array
+	gizmo_rings_vb: glue.Gl_Buffer
+	// gizmo_rings_ib: glue.Gl_Buffer
+	glue.create_vertex_array(&gizmo_rings_va)
+	defer glue.destroy_vertex_array(&gizmo_rings_va)
+	glue.create_dynamic_gl_buffer(&gizmo_rings_vb)
+	defer glue.destroy_gl_buffer(&gizmo_rings_vb)
+	// glue.create_dynamic_gl_buffer(&gizmo_rings_ib)
+	// defer glue.destroy_gl_buffer(&gizmo_rings_ib)
+	glue.set_vertex_array_format(gizmo_rings_va, gizmo_rings_vertex_format)
+	glue.bind_vertex_buffer(gizmo_rings_va, gizmo_rings_vb, size_of(gizmo.Ring_Vertex))
+	// glue.bind_index_buffer(gizmo_rings_va, gizmo_rings_ib)
+
+	gizmo_quad_shader, gizmo_quad_shader_ok := glue.create_shader(#load("shaders/gizmo_quad.vert"),
+								      #load("shaders/gizmo_quad.frag"))
+	if !gizmo_quad_shader_ok do log.panic("Failed to compile the gizmo quad shader.")
+	defer glue.destroy_shader(gizmo_quad_shader)
+
+	gizmo_ring_shader, gizmo_ring_shader_ok := glue.create_shader(#load("shaders/gizmo_ring.vert"),
+								      #load("shaders/gizmo_ring.frag"))
+	if !gizmo_ring_shader_ok do log.panic("Failed to compile the gizmo ring shader.")
+	defer glue.destroy_shader(gizmo_ring_shader)
 
 	cube_mesh := glue.create_mesh(vertices = slice.to_bytes(cube_vertices[:]),
 				      vertex_stride = size_of(Vertex_3D),
@@ -116,9 +162,12 @@ main :: proc() {
 
 	clear_color := glue.BLACK
 	set_clear_color(clear_color)
-	color := glue.WHITE
-	glue.set_uniform(lit_shader, COLOR_UNIFORM, color)
-	glue.set_uniform(unlit_shader, COLOR_UNIFORM, color)
+	lit_color := glue.WHITE
+	unlit_color := glue.WHITE
+	glue.set_uniform(lit_shader, COLOR_UNIFORM, lit_color)
+	glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
+
+	cube_translation: Vec3
 
 	prev_time := glue.time()
 
@@ -137,14 +186,6 @@ main :: proc() {
 			}
 		}
 
-		imgui.Begin("Window")
-		if imgui.ColorEdit4("Clear color", &clear_color) do set_clear_color(clear_color)
-		if imgui.ColorEdit4("Color", &color) {
-			glue.set_uniform(lit_shader, COLOR_UNIFORM, color)
-			glue.set_uniform(unlit_shader, COLOR_UNIFORM, color)
-		}
-		imgui.End()
-
 		if !glue.cursor_enabled() {
 			LOOK_SPEED :: 1
 			cursor_position_delta := linalg.array_cast(glue.cursor_position_delta(), f32)
@@ -161,7 +202,11 @@ main :: proc() {
 		if glue.key_pressed(.A) do camera.position -= camera_vectors.right   * MOVEMENT_SPEED * dt
 		if glue.key_pressed(.D) do camera.position += camera_vectors.right   * MOVEMENT_SPEED * dt
 
-		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+		imgui.Begin("Window")
+		if imgui.ColorEdit4("Clear color", &clear_color) do set_clear_color(clear_color)
+		if imgui.ColorEdit4("Lit Color", &lit_color) do glue.set_uniform(lit_shader, COLOR_UNIFORM, lit_color)
+		if imgui.ColorEdit4("Unlit Color", &unlit_color) do glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
+		imgui.End()
 
 		view := linalg.matrix4_look_at(eye = camera.position,
 					       centre = camera.position + camera_vectors.forward,
@@ -170,6 +215,16 @@ main :: proc() {
 							 aspect = glue.window_aspect_ratio(),
 							 near = 0.1,
 							 far = 1000)
+
+		ndc_cursor_pos := get_normalized_cursor_position()
+		gizmo.manipulate(translation = &cube_translation,
+				 mouse_position = linalg.array_cast(ndc_cursor_pos, f32),
+				 mouse_pressed = glue.mouse_button_pressed(.Left),
+				 view = view,
+				 projection = projection)
+
+		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
 		mvp_buffer_data := Mvp_Buffer_Data {
 			view = view,
 			projection = projection,
@@ -177,9 +232,10 @@ main :: proc() {
 		glue.upload_static_gl_buffer_data(mvp_buffer, mem.any_to_bytes(mvp_buffer_data))
 
 		{
+			// CUBE
 			glue.bind_texture(texture, 0)
 			glue.use_shader(lit_shader)
-			model: Mat4 = 1
+			model := linalg.matrix4_translate(cube_translation)
 			glue.set_uniform(lit_shader, MODEL_UNIFORM, model)
 
 			glue.bind_mesh(cube_mesh)
@@ -190,6 +246,7 @@ main :: proc() {
 		}
 
 		{
+			// SPHERE
 			glue.bind_texture(texture, 0)
 			glue.use_shader(unlit_shader)
 			model := linalg.matrix4_translate(Vec3{ 10, 1, 10 })
@@ -202,6 +259,30 @@ main :: proc() {
 					rawptr(uintptr(sphere_mesh.index_data_offset)))
 		}
 
+		{
+			// GIZMO
+			// gl.Disable(gl.DEPTH_TEST)
+			// defer gl.Enable(gl.DEPTH_TEST)
+			// gl.Disable(gl.CULL_FACE)
+			// defer gl.Enable(gl.CULL_FACE)
+
+			// We should probably sort the triangles instead of clearing the depth buffer. That seems
+			// wasteful.
+			gl.Clear(gl.DEPTH_BUFFER_BIT)
+
+			gizmo_draw_data := gizmo.get_draw_data()
+			defer gizmo.free_draw_data(gizmo_draw_data)
+
+			glue.upload_dynamic_gl_buffer_data(&gizmo_quads_vb, slice.to_bytes(gizmo_draw_data.triangle_vertices[:]))
+			// glue.upload_dynamic_gl_buffer_data(&gizmo_quads_ib, slice.to_bytes(gizmo_draw_data.quad_indices[:]))
+
+			glue.use_shader(gizmo_quad_shader)
+			glue.bind_vertex_array(gizmo_quads_va)
+			gl.DrawArrays(gl.TRIANGLES,
+				      0,
+				      cast(i32)len(gizmo_draw_data.triangle_vertices))
+		}
+
 		glue.end_frame()
 		free_all(context.temp_allocator)
 	}
@@ -209,4 +290,12 @@ main :: proc() {
 
 set_clear_color :: proc(color: Vec4) {
 	gl.ClearColor(color.r, color.g, color.b, color.a)
+}
+
+get_normalized_cursor_position :: proc() -> [2]f64 {
+	pos := glue.cursor_position()
+	window_size := linalg.array_cast(glue.window_size(), f64)
+	pos = pos / window_size * 2 - 1
+	pos.y = -pos.y
+	return pos
 }
