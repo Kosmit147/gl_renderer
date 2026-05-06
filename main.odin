@@ -1,6 +1,7 @@
 package gl_renderer
 
 import "base:runtime"
+import "base:intrinsics"
 
 import "glue"
 import imgui "glue/vendor/imgui"
@@ -12,6 +13,7 @@ import "core:slice"
 import "core:math"
 import "core:math/linalg"
 import "core:mem"
+import "core:fmt"
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -88,44 +90,37 @@ main :: proc() {
 	gizmo.init()
 	defer gizmo.deinit()
 
-	gizmo_quads_vertex_format := []glue.Vertex_Attribute{ .Float_3, .Float_4 }
-	gizmo_rings_vertex_format := []glue.Vertex_Attribute{ .Float_3, .Float_4 }
+	gizmo_triangles_vertex_format := []glue.Vertex_Attribute{ .Float_3, .Float_4 }
+	gizmo_ellipses_vertex_format := []glue.Vertex_Attribute{ .Float_2, .Float_4, .Float_2, .Float_2, .Float_2 }
 
-	gizmo_quads_va: glue.Vertex_Array
-	gizmo_quads_vb: glue.Gl_Buffer
+	gizmo_triangles_va: glue.Vertex_Array
+	gizmo_triangles_vb: glue.Gl_Buffer
 	// gizmo_quads_ib: glue.Gl_Buffer
-	glue.create_vertex_array(&gizmo_quads_va)
-	defer glue.destroy_vertex_array(&gizmo_quads_va)
-	glue.create_dynamic_gl_buffer(&gizmo_quads_vb)
-	defer glue.destroy_gl_buffer(&gizmo_quads_vb)
-	// glue.create_dynamic_gl_buffer(&gizmo_quads_ib)
-	// defer glue.destroy_gl_buffer(&gizmo_quads_ib)
-	glue.set_vertex_array_format(gizmo_quads_va, gizmo_quads_vertex_format)
-	glue.bind_vertex_buffer(gizmo_quads_va, gizmo_quads_vb, size_of(gizmo.Triangle_Vertex))
-	// glue.bind_index_buffer(gizmo_quads_va, gizmo_quads_ib)
+	glue.create_vertex_array(&gizmo_triangles_va)
+	defer glue.destroy_vertex_array(&gizmo_triangles_va)
+	glue.create_dynamic_gl_buffer(&gizmo_triangles_vb)
+	defer glue.destroy_gl_buffer(&gizmo_triangles_vb)
+	glue.set_vertex_array_format(gizmo_triangles_va, gizmo_triangles_vertex_format)
+	glue.bind_vertex_buffer(gizmo_triangles_va, gizmo_triangles_vb, size_of(gizmo.Triangle_Vertex))
 
-	gizmo_rings_va: glue.Vertex_Array
-	gizmo_rings_vb: glue.Gl_Buffer
-	// gizmo_rings_ib: glue.Gl_Buffer
-	glue.create_vertex_array(&gizmo_rings_va)
-	defer glue.destroy_vertex_array(&gizmo_rings_va)
-	glue.create_dynamic_gl_buffer(&gizmo_rings_vb)
-	defer glue.destroy_gl_buffer(&gizmo_rings_vb)
-	// glue.create_dynamic_gl_buffer(&gizmo_rings_ib)
-	// defer glue.destroy_gl_buffer(&gizmo_rings_ib)
-	glue.set_vertex_array_format(gizmo_rings_va, gizmo_rings_vertex_format)
-	glue.bind_vertex_buffer(gizmo_rings_va, gizmo_rings_vb, size_of(gizmo.Ring_Vertex))
-	// glue.bind_index_buffer(gizmo_rings_va, gizmo_rings_ib)
+	gizmo_ellipses_va: glue.Vertex_Array
+	gizmo_ellipses_vb: glue.Gl_Buffer
+	glue.create_vertex_array(&gizmo_ellipses_va)
+	defer glue.destroy_vertex_array(&gizmo_ellipses_va)
+	glue.create_dynamic_gl_buffer(&gizmo_ellipses_vb)
+	defer glue.destroy_gl_buffer(&gizmo_ellipses_vb)
+	glue.set_vertex_array_format(gizmo_ellipses_va, gizmo_ellipses_vertex_format)
+	glue.bind_vertex_buffer(gizmo_ellipses_va, gizmo_ellipses_vb, size_of(gizmo.Ellipse_Vertex))
 
-	gizmo_quad_shader, gizmo_quad_shader_ok := glue.create_shader(#load("shaders/gizmo_quad.vert"),
-								      #load("shaders/gizmo_quad.frag"))
-	if !gizmo_quad_shader_ok do log.panic("Failed to compile the gizmo quad shader.")
-	defer glue.destroy_shader(gizmo_quad_shader)
+	gizmo_triangle_shader, gizmo_triangle_shader_ok := glue.create_shader(#load("shaders/gizmo_triangle.vert"),
+									      #load("shaders/gizmo_triangle.frag"))
+	if !gizmo_triangle_shader_ok do log.panic("Failed to compile the gizmo triangle shader.")
+	defer glue.destroy_shader(gizmo_triangle_shader)
 
-	gizmo_ring_shader, gizmo_ring_shader_ok := glue.create_shader(#load("shaders/gizmo_ring.vert"),
-								      #load("shaders/gizmo_ring.frag"))
-	if !gizmo_ring_shader_ok do log.panic("Failed to compile the gizmo ring shader.")
-	defer glue.destroy_shader(gizmo_ring_shader)
+	gizmo_ellipse_shader, gizmo_ellipse_shader_ok := glue.create_shader(#load("shaders/gizmo_ellipse.vert"),
+									  #load("shaders/gizmo_ellipse.frag"))
+	if !gizmo_ellipse_shader_ok do log.panic("Failed to compile the gizmo ellipse shader.")
+	defer glue.destroy_shader(gizmo_ellipse_shader)
 
 	cube_mesh := glue.create_mesh(vertices = slice.to_bytes(cube_vertices[:]),
 				      vertex_stride = size_of(Vertex_3D),
@@ -168,6 +163,9 @@ main :: proc() {
 	glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
 
 	cube_translation := Vec3{ 0, 0, -1 }
+	cube_rotation: Quat
+	cube_scale := Vec3{ 1, 1, 1 }
+	gizmo_mode := gizmo.Mode.Rotate
 
 	prev_time := glue.time()
 
@@ -196,16 +194,20 @@ main :: proc() {
 
 		camera_vectors := glue.camera_vectors(camera)
 
-		MOVEMENT_SPEED :: 5
-		if glue.key_pressed(.W) do camera.position += camera_vectors.forward * MOVEMENT_SPEED * dt
-		if glue.key_pressed(.S) do camera.position -= camera_vectors.forward * MOVEMENT_SPEED * dt
-		if glue.key_pressed(.A) do camera.position -= camera_vectors.right   * MOVEMENT_SPEED * dt
-		if glue.key_pressed(.D) do camera.position += camera_vectors.right   * MOVEMENT_SPEED * dt
+		BASE_MOVEMENT_SPEED :: 1
+		SPRINT_MOVEMENT_SPEED :: 5
+		movement_speed: f32 = BASE_MOVEMENT_SPEED
+		if glue.key_pressed(.Left_Shift) do movement_speed = SPRINT_MOVEMENT_SPEED
+		if glue.key_pressed(.W) do camera.position += camera_vectors.forward * movement_speed * dt
+		if glue.key_pressed(.S) do camera.position -= camera_vectors.forward * movement_speed * dt
+		if glue.key_pressed(.A) do camera.position -= camera_vectors.right   * movement_speed * dt
+		if glue.key_pressed(.D) do camera.position += camera_vectors.right   * movement_speed * dt
 
 		imgui.Begin("Window")
 		if imgui.ColorEdit4("Clear color", &clear_color) do set_clear_color(clear_color)
 		if imgui.ColorEdit4("Lit Color", &lit_color) do glue.set_uniform(lit_shader, COLOR_UNIFORM, lit_color)
 		if imgui.ColorEdit4("Unlit Color", &unlit_color) do glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
+		imgui_enum_select("Gizmo Mode", &gizmo_mode)
 		imgui.End()
 
 		view := linalg.matrix4_look_at(eye = camera.position,
@@ -217,8 +219,9 @@ main :: proc() {
 							 far = 1000)
 
 		ndc_cursor_pos := get_normalized_cursor_position()
-		gizmo.manipulate(mode = .Translate,
+		gizmo.manipulate(mode = gizmo_mode,
 				 translation = &cube_translation,
+				 rotation = &cube_rotation,
 				 mouse_position = linalg.array_cast(ndc_cursor_pos, f32),
 				 mouse_pressed = glue.mouse_button_pressed(.Left),
 				 view = view,
@@ -236,7 +239,10 @@ main :: proc() {
 			// CUBE
 			glue.bind_texture(texture, 0)
 			glue.use_shader(lit_shader)
-			model := linalg.matrix4_translate(cube_translation)
+			translation := linalg.matrix4_translate(cube_translation)
+			rotation := linalg.matrix4_from_quaternion(cube_rotation)
+			scale := linalg.matrix4_scale(cube_scale)
+			model := translation * rotation * scale
 			glue.set_uniform(lit_shader, MODEL_UNIFORM, model)
 
 			glue.bind_mesh(cube_mesh)
@@ -274,14 +280,24 @@ main :: proc() {
 			gizmo_draw_data := gizmo.get_draw_data()
 			defer gizmo.free_draw_data(gizmo_draw_data)
 
-			glue.upload_dynamic_gl_buffer_data(&gizmo_quads_vb, slice.to_bytes(gizmo_draw_data.triangle_vertices[:]))
-			// glue.upload_dynamic_gl_buffer_data(&gizmo_quads_ib, slice.to_bytes(gizmo_draw_data.quad_indices[:]))
+			glue.upload_dynamic_gl_buffer_data(&gizmo_triangles_vb, slice.to_bytes(gizmo_draw_data.triangle_vertices[:]))
 
-			glue.use_shader(gizmo_quad_shader)
-			glue.bind_vertex_array(gizmo_quads_va)
+			glue.use_shader(gizmo_triangle_shader)
+			glue.bind_vertex_array(gizmo_triangles_va)
 			gl.DrawArrays(gl.TRIANGLES,
 				      0,
 				      cast(i32)len(gizmo_draw_data.triangle_vertices))
+
+			gl.Disable(gl.DEPTH_TEST)
+			defer gl.Enable(gl.DEPTH_TEST)
+
+			glue.upload_dynamic_gl_buffer_data(&gizmo_ellipses_vb, slice.to_bytes(gizmo_draw_data.ellipse_vertices[:]))
+
+			glue.use_shader(gizmo_ellipse_shader)
+			glue.bind_vertex_array(gizmo_ellipses_va)
+			gl.DrawArrays(gl.TRIANGLES,
+				      0,
+				      cast(i32)len(gizmo_draw_data.ellipse_vertices))
 		}
 
 		glue.end_frame()
@@ -299,4 +315,20 @@ get_normalized_cursor_position :: proc() -> [2]f64 {
 	pos = pos / window_size * 2 - 1
 	pos.y = -pos.y
 	return pos
+}
+
+imgui_enum_select :: proc(label: cstring, value: ^$E) -> bool where intrinsics.type_is_enum(E) {
+	value_changed := false
+	if imgui.BeginCombo(label, fmt.ctprintf("%v", value^)) {
+		for enum_value in E {
+			is_selected := enum_value == value^
+			if imgui.Selectable(fmt.ctprintf("%v", enum_value), is_selected) {
+				value^ = enum_value
+				value_changed = true
+			}
+			if is_selected do imgui.SetItemDefaultFocus()
+		}
+		imgui.EndCombo()
+	}
+	return value_changed
 }

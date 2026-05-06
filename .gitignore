@@ -1,4 +1,5 @@
 *.pdb
+*.rdi
 *.exe
 *.rdbg
 /imgui.ini
