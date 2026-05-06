@@ -2,9 +2,15 @@ package gizmo
 
 import "core:math/linalg"
 
-X_COLOR :: Vec4{ 1, 0, 0, 0.8 }
-Y_COLOR :: Vec4{ 0, 1, 0, 0.8 }
-Z_COLOR :: Vec4{ 0, 0, 1, 0.8 }
+GIZMO_SIZE     :: 0.1
+LINE_LENGTH    :: 0.2
+LINE_THICKNESS :: 0.004
+ARROW_WIDTH    :: 0.02
+ARROW_HEIGHT   :: 0.02
+
+X_COLOR :: Vec4{ 1, 0, 0, 0.7 }
+Y_COLOR :: Vec4{ 0, 1, 0, 0.7 }
+Z_COLOR :: Vec4{ 0, 0, 1, 0.7 }
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -39,8 +45,6 @@ Mode :: enum {
 }
 
 Gizmo :: struct {
-	mode: Mode,
-
 	prev_mouse_position: Vec2, // In NDC.
 	mouse_was_pressed: bool,
 
@@ -50,9 +54,8 @@ Gizmo :: struct {
 	// These are the final triangles in ndc which are going to be drawn on the screen.
 	triangles: [dynamic]Triangle,
 
-	axis_world_directions: [Axis]Vec3,
-	axis_screen_directions: [Axis]Vec3,
-	axis_depths: [Axis]f32,
+	axis_directions_ss: [Axis]Vec2,
+	axis_depths_vs: [Axis]f32,
 }
 
 @(private="file")
@@ -68,7 +71,8 @@ deinit :: proc() {
 	delete(s_gizmo.triangles)
 }
 
-manipulate :: proc(translation: ^Vec3,
+manipulate :: proc(mode: Mode,
+		   translation: ^Vec3,
 		   // rotation: ^Quat,
 		   // scale: ^Vec3,
 		   mouse_position: Vec2, // In NDC.
@@ -83,35 +87,43 @@ manipulate :: proc(translation: ^Vec3,
 				  projection: Mat4,
 				  view: Mat4,
 				  axis: Axis) {
+		aspect_ratio := projection[1, 1] / projection[0, 0]
 		axis_vec := axis_vectors[axis]
+		axis_vec_vs := linalg.matrix3_from_matrix4(view) * axis_vec
 
-		line_start := Vec4{ translation.x, translation.y, translation.z, 1 }
-		line_end := line_start + Vec4{ axis_vec.x, axis_vec.y, axis_vec.z, 0 }
+		line_start_vs := view * Vec4{ translation.x, translation.y, translation.z, 1 }
+		line_end_vs := line_start_vs + Vec4{ axis_vec_vs.x, axis_vec_vs.y, axis_vec_vs.z, 0 } * (-line_start_vs.z * GIZMO_SIZE)
+		arrow_tip_vs := line_end_vs + Vec4{ axis_vec_vs.x, axis_vec_vs.y, axis_vec_vs.z, 0 } * (-line_start_vs.z * ARROW_HEIGHT)
 
-		s_gizmo.axis_world_directions[axis] = (line_end - line_start).xyz
+		s_gizmo.axis_depths_vs[axis] = -line_end_vs.z
 
-		line_start = view * line_start
-		line_end = view * line_end
+		line_start_cs := projection * line_start_vs
+		line_end_cs := projection * line_end_vs
+		arrow_tip_cs := projection * arrow_tip_vs
 
-		s_gizmo.axis_depths[axis] = -line_end.z
+		line_start_ss := line_start_cs / line_start_cs.w
+		line_end_ss := line_end_cs / line_end_cs.w
+		arrow_tip_ss := arrow_tip_cs / arrow_tip_cs.w
 
-		// TODO: Do we have to do projection here? Maybe we could just draw the lines in view space?
-		line_start = projection * line_start
-		line_end = projection * line_end
-
-		line_start /= line_start.w
-		line_end /= line_end.w
-
-		line_direction := linalg.normalize0((line_end - line_start).xyz)
-		s_gizmo.axis_screen_directions[axis] = line_direction
-		orthogonal_direction := linalg.normalize0(linalg.cross(line_direction, Vec3{ 0, 0, -1 }))
+		line_direction_ss := linalg.normalize0((line_end_ss - line_start_ss).xy)
+		s_gizmo.axis_directions_ss[axis] = line_direction_ss
+		line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
+		line_direction_orthogonal_ss.x /= aspect_ratio
+		line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
 
 		{
 			// Line
-			p1 := line_start.xyz + orthogonal_direction *  0.004
-			p2 := line_start.xyz + orthogonal_direction * -0.004
-			p3 := line_start.xyz + line_direction * 0.2 + orthogonal_direction *  0.004
-			p4 := line_start.xyz + line_direction * 0.2 + orthogonal_direction * -0.004
+			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / aspect_ratio,
+				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
+				            0 }
+			line_length := Vec3{ line_direction_ss.x * LINE_LENGTH,
+					     line_direction_ss.y * LINE_LENGTH,
+					     0}
+
+			p1 := line_start_ss.xyz + line_width
+			p2 := line_start_ss.xyz - line_width
+			p3 := line_end_ss.xyz + line_width
+			p4 := line_end_ss.xyz - line_width
 
 			append(&s_gizmo.triangles, Triangle{ { p1, p2, p3 }, axis })
 			append(&s_gizmo.triangles, Triangle{ { p4, p3, p2 }, axis })
@@ -119,15 +131,22 @@ manipulate :: proc(translation: ^Vec3,
 
 		{
 			// Arrow
-			p1 := line_start.xyz + line_direction * 0.2 + orthogonal_direction *  0.02
-			p2 := line_start.xyz + line_direction * 0.2 + orthogonal_direction * -0.02
-			p3 := line_start.xyz + line_direction * 0.22
+			arrow_width := Vec3{ line_direction_orthogonal_ss.x * ARROW_WIDTH / aspect_ratio,
+				             line_direction_orthogonal_ss.y * ARROW_WIDTH,
+				             0 }
+			line_length := Vec3{ line_direction_ss.x * LINE_LENGTH,
+					     line_direction_ss.y * LINE_LENGTH,
+					     0}
+
+			p1 := line_end_ss.xyz + arrow_width
+			p2 := line_end_ss.xyz - arrow_width
+			p3 := arrow_tip_ss.xyz
 
 			append(&s_gizmo.triangles, Triangle{ { p1, p2, p3 }, axis })
 		}
 	}
 
-	switch s_gizmo.mode {
+	switch mode {
 	case .Translate:
 		translation_arrow(translation^, projection, view, .X)
 		translation_arrow(translation^, projection, view, .Y)
@@ -146,21 +165,19 @@ manipulate :: proc(translation: ^Vec3,
 	}
 	s_gizmo.dragging = mouse_pressed && s_gizmo.selected_axis != nil
 
-	switch s_gizmo.mode {
+	switch mode {
 	case .Translate:
 		if s_gizmo.dragging {
 			if mouse_position != s_gizmo.prev_mouse_position {
 				mouse_delta := mouse_position - s_gizmo.prev_mouse_position
 				axis := s_gizmo.selected_axis.(Axis)
 
-				axis_world_dir := s_gizmo.axis_world_directions[axis]
-				axis_screen_dir := s_gizmo.axis_screen_directions[axis]
-				axis_depth := s_gizmo.axis_depths[axis]
+				axis_dir_ss := s_gizmo.axis_directions_ss[axis]
+				axis_depth_vs := s_gizmo.axis_depths_vs[axis]
 
-				movement := linalg.dot(axis_screen_dir.xy, linalg.normalize(mouse_delta)) * linalg.length(mouse_delta)
-				// screen_movement := linalg.length(axis_screen_dir.xy * mouse_delta)
-				movement *= axis_depth
-				translation^ += axis_world_dir * movement
+				movement := linalg.dot(linalg.normalize0(axis_dir_ss), linalg.normalize0(mouse_delta)) * linalg.length(mouse_delta)
+				movement *= axis_depth_vs
+				translation^ += axis_vectors[axis] * movement
 				value_changed = true
 			}
 		}
@@ -176,12 +193,6 @@ manipulate :: proc(translation: ^Vec3,
 get_draw_data :: proc(allocator := context.temp_allocator) -> (draw_data: Draw_Data) {
 	draw_data.triangle_vertices = make([dynamic]Triangle_Vertex, allocator)
 	draw_data.ring_vertices = make([dynamic]Ring_Vertex, allocator)
-
-	switch s_gizmo.mode {
-	case .Translate:
-	case .Rotate:
-	case .Scale:
-	}
 
 	for triangle in s_gizmo.triangles {
 		color := axis_colors[triangle.axis]

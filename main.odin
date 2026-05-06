@@ -167,7 +167,7 @@ main :: proc() {
 	glue.set_uniform(lit_shader, COLOR_UNIFORM, lit_color)
 	glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
 
-	cube_translation: Vec3
+	cube_translation := Vec3{ 0, 0, -1 }
 
 	prev_time := glue.time()
 
@@ -217,7 +217,8 @@ main :: proc() {
 							 far = 1000)
 
 		ndc_cursor_pos := get_normalized_cursor_position()
-		gizmo.manipulate(translation = &cube_translation,
+		gizmo.manipulate(mode = .Translate,
+				 translation = &cube_translation,
 				 mouse_position = linalg.array_cast(ndc_cursor_pos, f32),
 				 mouse_pressed = glue.mouse_button_pressed(.Left),
 				 view = view,
