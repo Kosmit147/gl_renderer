@@ -12,6 +12,9 @@ import "core:log"
 // - Perform operations in screen space (e. g. translate an object parallel to the screen)
 // - Scale (do circles at the ends of the lines instead of arrows)
 // - Ellipse could be described by the foci.
+// - Mouse picking with ellipse could be solved with the standard foci equation in screen space as well.
+// - Ellipses could also be done with lines (composed of triangles like the same way translation arrows are composed).
+// This would probably be the simplest way of doing rotation circles.
 
 GIZMO_SIZE     :: 0.1
 LINE_LENGTH    :: 0.2
@@ -241,12 +244,6 @@ manipulate :: proc(mode: Mode,
 		vertices_ss := vertices_cs
 		for &v in vertices_ss do v = v / v.w
 
-		// line_direction_ss := linalg.normalize0((line_end_ss - line_start_ss).xy)
-		// s_gizmo.axis_directions_ss[axis] = line_direction_ss
-		// line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
-		// line_direction_orthogonal_ss.x /= aspect_ratio
-		// line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
-
 		radius_ss := Vec2{
 			abs(vertices_ss[0].x - center_ss.x),
 			abs(vertices_ss[0].y - center_ss.y),
@@ -268,8 +265,8 @@ manipulate :: proc(mode: Mode,
 		reference_line(translation^, .Y, projection, view)
 		reference_line(translation^, .Z, projection, view)
 		rotation_circle(translation^, rotation^, .X, projection, view)
-		rotation_circle(translation^, rotation^, .Y, projection, view)
-		rotation_circle(translation^, rotation^, .Z, projection, view)
+		// rotation_circle(translation^, rotation^, .Y, projection, view)
+		// rotation_circle(translation^, rotation^, .Z, projection, view)
 	case .Scale:
 	}
 
