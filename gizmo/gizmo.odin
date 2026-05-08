@@ -1,37 +1,35 @@
 package gizmo
 
+import "core:math"
 import "core:math/linalg"
-import "core:log"
 
 // TODO:
-// - No dynamic allocations
-// - contextless
-// - Allow to rotate via either quaternions or euler angles
-// - Mouse picking should pick the axis that is in front
+// - Scale (do circles or cubes at the ends of the lines instead of arrows).
+// - Allow to rotate via either quaternions or euler angles.
+// - Mouse picking should pick the axis that is in front.
 // - Returned draw data should be z-sorted. Z component should probably not be returned.
-// - Perform operations in screen space (e. g. translate an object parallel to the screen)
-// - Scale (do circles at the ends of the lines instead of arrows)
-// - Ellipse could be described by the foci.
-// - Mouse picking with ellipse could be solved with the standard foci equation in screen space as well.
-// - Ellipses could also be done with lines (composed of triangles like the same way translation arrows are composed).
-// This would probably be the simplest way of doing rotation circles.
+// - Ability to perform operations in screen space (e. g. translate an object parallel to the screen).
+// - Gizmo size should be a parameter.
+// - Ability to perform operations in local space instead of world space.
+// - Support generic types instead of just f32s.
+// - Should work with any either left-handed or right-handed, y-down or y-up coordinate systems.
 
-GIZMO_SIZE     :: 0.1
-LINE_LENGTH    :: 0.2
-LINE_THICKNESS :: 0.004
-ARROW_WIDTH    :: 0.02
-ARROW_HEIGHT   :: 0.02
+GIZMO_SIZE               :: 0.1
+LINE_LENGTH              :: 0.2
+LINE_THICKNESS           :: 0.004
+ARROW_WIDTH              :: 0.02
+ARROW_HEIGHT             :: 0.02
+ROTATION_CIRCLE_SEGMENTS :: 64
 
-X_COLOR :: Vec4{ 1, 0, 0, 0.7 }
-Y_COLOR :: Vec4{ 0, 1, 0, 0.7 }
-Z_COLOR :: Vec4{ 0, 0, 1, 0.7 }
-
-HOVERED_HIGHLIGHT  :: 0.15
-DRAGGING_HIGHLIGHT :: 0.3
+TRANSLATION_TRIANGLE_COUNT :: (2 + 1) * 3 // (Line + arrow) * 3 axes.
+ROTATION_TRIANGLE_COUNT :: ROTATION_CIRCLE_SEGMENTS * 2 * 3 // 2 triangles per segment * 3 axes.
+MAX_TRIANGLES :: max(TRANSLATION_TRIANGLE_COUNT, ROTATION_TRIANGLE_COUNT)
+MAX_TRIANGLE_VERTICES :: MAX_TRIANGLES * 3
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
 Vec4 :: [4]f32
+Mat3 :: matrix[3, 3]f32
 Mat4 :: matrix[4, 4]f32
 Quat :: quaternion128
 
@@ -42,165 +40,112 @@ Axis :: enum {
 }
 
 @(rodata)
-axis_colors := [Axis]Vec4{
-	.X = X_COLOR,
-	.Y = Y_COLOR,
-	.Z = Z_COLOR,
-}
-
-X_AXIS_VEC :: Vec3{ 1, 0, 0 }
-Y_AXIS_VEC :: Vec3{ 0, 1, 0 }
-Z_AXIS_VEC :: Vec3{ 0, 0, 1 }
-
-@(rodata)
 axis_vectors := [Axis]Vec3{
-	.X = X_AXIS_VEC,
-	.Y = Y_AXIS_VEC,
-	.Z = Z_AXIS_VEC,
+	.X = { 1, 0, 0 },
+	.Y = { 0, 1, 0 },
+	.Z = { 0, 0, 1 },
 }
 
-@(rodata)
-orthogonal_axis_vectors := [Axis][2]Vec3{
-	.X = { Y_AXIS_VEC, Z_AXIS_VEC },
-	.Y = { X_AXIS_VEC, Z_AXIS_VEC },
-	.Z = { X_AXIS_VEC, Y_AXIS_VEC },
-}
+HOVER_HIGHLIGHT    :: 0.15
+INTERACT_HIGHLIGHT :: 0.3
+COLOR_ALPHA        :: 0.7
 
 Mode :: enum {
 	Translate,
 	Rotate,
-	Scale,
 }
 
 Gizmo :: struct {
-	prev_mouse_position: Vec2, // In NDC.
-	mouse_was_pressed: bool,
+	view: Mat4,
+	projection: Mat4,
+	aspect_ratio: f32,
+	camera_forward: Vec3,
+
+	// Probably don't need to save all of these.
+	origin_ws: Vec4,
+	origin_vs: Vec4,
+	origin_cs: Vec4,
+	origin_ss: Vec4,
 
 	selected_axis: Maybe(Axis),
-	dragging: bool,
 
-	// These are the final primitives in ndc which are going to be drawn on the screen.
-	triangles: [dynamic]Triangle,
-	ellipses: [dynamic]Ellipse,
+	// In screen space. Saving multiple of these per axis could probably be avoided if we opted to resolve triangle
+	// intersections instantly instead of deferring them?
+	axis_directions_ss: [Axis]Vec2,
 
-	axis_directions_ss: [Axis]Vec2, // In screen space.
-	axis_depths_vs: [Axis]f32, // In view space.
+	interacting: bool,
+	original_rotation: Quat,
+	reference_rotation_angle: Maybe(f32),
+
+	prev_mouse_position: Vec2, // In NDC.
 }
 
 @(private="file")
 s_gizmo: Gizmo
 
-init :: proc() {
-	s_gizmo.triangles = make([dynamic]Triangle)
-	s_gizmo.ellipses = make([dynamic]Ellipse)
-}
+@(private="file")
+s_triangles: [dynamic; MAX_TRIANGLES]Triangle
 
-deinit :: proc() {
-	delete(s_gizmo.triangles)
-	delete(s_gizmo.ellipses)
-}
+@(private="file")
+s_triangle_vertices: [dynamic; MAX_TRIANGLE_VERTICES]Triangle_Vertex
 
-manipulate :: proc(mode: Mode,
-		   translation: ^Vec3,
-		   rotation: ^Quat,
-		   // scale: ^Vec3,
-		   mouse_position: Vec2, // In NDC.
-		   mouse_pressed: bool,
-		   view: Mat4,
-		   projection: Mat4) -> (value_changed := false) {
-	clear(&s_gizmo.triangles)
-	clear(&s_gizmo.ellipses)
+manipulate :: proc "contextless" (mode: Mode,
+				  translation: ^Vec3,
+				  rotation: ^Quat,
+				  mouse_position: Vec2, // In NDC.
+				  mouse_pressed: bool,
+				  view: Mat4,
+				  projection: Mat4) -> (value_changed := false) {
+	clear(&s_triangles)
+	clear(&s_triangle_vertices)
 
-	aspect_ratio := projection[1, 1] / projection[0, 0]
+	s_gizmo.view = view
+	s_gizmo.projection = projection
+	s_gizmo.aspect_ratio = projection[1, 1] / projection[0, 0]
+	s_gizmo.camera_forward = -Vec3{ view[2, 0], view[2, 1], view[2, 2] }
 
-	// TODO: Delete, for debugging only.
-	reference_line :: proc(translation: Vec3,
-				  axis: Axis,
-				  projection: Mat4,
-				  view: Mat4) {
-		aspect_ratio := projection[1, 1] / projection[0, 0]
-		axis_vec := axis_vectors[axis]
-		axis_vec_vs := linalg.matrix3_from_matrix4(view) * axis_vec
+	s_gizmo.origin_ws = Vec4{ expand_values(translation^), 1 }
+	s_gizmo.origin_vs = view * s_gizmo.origin_ws
+	s_gizmo.origin_cs = projection * s_gizmo.origin_vs
+	s_gizmo.origin_ss = s_gizmo.origin_cs / s_gizmo.origin_cs.w
 
-		line_start_vs := view * Vec4{ translation.x, translation.y, translation.z, 1 }
-		line_end_vs := line_start_vs + Vec4{ axis_vec_vs.x, axis_vec_vs.y, axis_vec_vs.z, 0 } * (-line_start_vs.z * GIZMO_SIZE * 3)
+	translation_arrow :: proc "contextless" (axis: Axis) {
+		line_end_ws := s_gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * GIZMO_SIZE
+		arrow_tip_ws := line_end_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * ARROW_HEIGHT
 
-		s_gizmo.axis_depths_vs[axis] = -line_end_vs.z
+		line_end_vs := s_gizmo.view * line_end_ws
+		arrow_tip_vs := s_gizmo.view * arrow_tip_ws
 
-		line_start_cs := projection * line_start_vs
-		line_end_cs := projection * line_end_vs
+		line_end_cs := s_gizmo.projection * line_end_vs
+		arrow_tip_cs := s_gizmo.projection * arrow_tip_vs
 
-		line_start_ss := line_start_cs / line_start_cs.w
-		line_end_ss := line_end_cs / line_end_cs.w
-
-		line_direction_ss := linalg.normalize0((line_end_ss - line_start_ss).xy)
-		s_gizmo.axis_directions_ss[axis] = line_direction_ss
-		line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
-		line_direction_orthogonal_ss.x /= aspect_ratio
-		line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
-
-		{
-			// Line
-			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / aspect_ratio,
-				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
-				            0 }
-
-			p1 := line_start_ss.xyz + line_width
-			p2 := line_start_ss.xyz - line_width
-			p3 := line_end_ss.xyz + line_width
-			p4 := line_end_ss.xyz - line_width
-
-			append(&s_gizmo.triangles, Triangle{ { p1, p2, p3 }, axis })
-			append(&s_gizmo.triangles, Triangle{ { p4, p3, p2 }, axis })
-		}
-	}
-
-	translation_arrow :: proc(translation: Vec3,
-				  axis: Axis,
-				  projection: Mat4,
-				  view: Mat4) {
-		aspect_ratio := projection[1, 1] / projection[0, 0]
-		axis_vec := axis_vectors[axis]
-		axis_vec_vs := linalg.matrix3_from_matrix4(view) * axis_vec
-
-		line_start_vs := view * Vec4{ translation.x, translation.y, translation.z, 1 }
-		line_end_vs := line_start_vs + Vec4{ axis_vec_vs.x, axis_vec_vs.y, axis_vec_vs.z, 0 } * (-line_start_vs.z * GIZMO_SIZE)
-		arrow_tip_vs := line_end_vs + Vec4{ axis_vec_vs.x, axis_vec_vs.y, axis_vec_vs.z, 0 } * (-line_start_vs.z * ARROW_HEIGHT)
-
-		s_gizmo.axis_depths_vs[axis] = -line_end_vs.z
-
-		line_start_cs := projection * line_start_vs
-		line_end_cs := projection * line_end_vs
-		arrow_tip_cs := projection * arrow_tip_vs
-
-		line_start_ss := line_start_cs / line_start_cs.w
 		line_end_ss := line_end_cs / line_end_cs.w
 		arrow_tip_ss := arrow_tip_cs / arrow_tip_cs.w
 
-		line_direction_ss := linalg.normalize0((line_end_ss - line_start_ss).xy)
+		line_direction_ss := linalg.normalize0((line_end_ss - s_gizmo.origin_ss).xy)
 		s_gizmo.axis_directions_ss[axis] = line_direction_ss
 		line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
-		line_direction_orthogonal_ss.x /= aspect_ratio
+		line_direction_orthogonal_ss.x /= s_gizmo.aspect_ratio
 		line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
 
 		{
-			// Line
-			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / aspect_ratio,
+			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / s_gizmo.aspect_ratio,
 				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
 				            0 }
 
-			p1 := line_start_ss.xyz + line_width
-			p2 := line_start_ss.xyz - line_width
+			p1 := s_gizmo.origin_ss.xyz + line_width
+			p2 := s_gizmo.origin_ss.xyz - line_width
 			p3 := line_end_ss.xyz + line_width
 			p4 := line_end_ss.xyz - line_width
 
-			append(&s_gizmo.triangles, Triangle{ { p1, p2, p3 }, axis })
-			append(&s_gizmo.triangles, Triangle{ { p4, p3, p2 }, axis })
+			t1 := Triangle{ { p1, p2, p3 }, axis }
+			t2 := Triangle{ { p4, p3, p2 }, axis }
+
+			append(&s_triangles, t1, t2)
 		}
 
 		{
-			// Arrow
-			arrow_width := Vec3{ line_direction_orthogonal_ss.x * ARROW_WIDTH / aspect_ratio,
+			arrow_width := Vec3{ line_direction_orthogonal_ss.x * ARROW_WIDTH / s_gizmo.aspect_ratio,
 				             line_direction_orthogonal_ss.y * ARROW_WIDTH,
 				             0 }
 
@@ -208,180 +153,145 @@ manipulate :: proc(mode: Mode,
 			p2 := line_end_ss.xyz - arrow_width
 			p3 := arrow_tip_ss.xyz
 
-			append(&s_gizmo.triangles, Triangle{ { p1, p2, p3 }, axis })
+			append(&s_triangles, Triangle{ { p1, p2, p3 }, axis })
 		}
 	}
 
-	rotation_circle :: proc(translation: Vec3,
-				rotation: Quat,
-				axis: Axis,
-				projection: Mat4,
-				view: Mat4) {
-		aspect_ratio := projection[1, 1] / projection[0, 0]
-		axis_vec := axis_vectors[axis]
-		orthogonal_axis_vecs := orthogonal_axis_vectors[axis]
-		axis_vec_vs := linalg.matrix3_from_matrix4(view) * axis_vec
-		orthogonal_axis_vecs_vs := [2]Vec3{
-			linalg.matrix3_from_matrix4(view) * orthogonal_axis_vecs[0],
-			linalg.matrix3_from_matrix4(view) * orthogonal_axis_vecs[1],
+	rotation_circle :: proc "contextless" (axis: Axis) {
+		segment :: proc "contextless" (start_vs: Vec4,
+					       end_vs: Vec4,
+					       axis: Axis) {
+			start_cs := s_gizmo.projection * start_vs
+			end_cs := s_gizmo.projection * end_vs
+
+			start_ss := start_cs / start_cs.w
+			end_ss := end_cs / end_cs.w
+
+			line_direction_ss := linalg.normalize0((end_ss - start_ss).xy)
+			line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
+			line_direction_orthogonal_ss.x /= s_gizmo.aspect_ratio
+			line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
+
+			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / s_gizmo.aspect_ratio,
+				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
+				            0 }
+
+			p1 := start_ss.xyz + line_width
+			p2 := start_ss.xyz - line_width
+			p3 := end_ss.xyz + line_width
+			p4 := end_ss.xyz - line_width
+
+			t1 := Triangle{ { p1, p2, p3 }, axis }
+			t2 := Triangle{ { p4, p3, p2 }, axis }
+
+			append(&s_triangles, t1, t2)
 		}
 
-		center_ws := Vec4{ translation.x, translation.y, translation.z, 1 }
-
-		center_vs := view * center_ws
-		vertices_vs: [4]Vec4
-		vertices_vs[0].xyz = center_vs.xyz + ( orthogonal_axis_vecs_vs[0] +  orthogonal_axis_vecs_vs[1]) * -center_vs.z * GIZMO_SIZE
-		vertices_vs[1].xyz = center_vs.xyz + ( orthogonal_axis_vecs_vs[0] + -orthogonal_axis_vecs_vs[1]) * -center_vs.z * GIZMO_SIZE
-		vertices_vs[2].xyz = center_vs.xyz + (-orthogonal_axis_vecs_vs[0] +  orthogonal_axis_vecs_vs[1]) * -center_vs.z * GIZMO_SIZE
-		vertices_vs[3].xyz = center_vs.xyz + (-orthogonal_axis_vecs_vs[0] + -orthogonal_axis_vecs_vs[1]) * -center_vs.z * GIZMO_SIZE
-		for &v in vertices_vs do v.w = 1
-
-		center_cs := projection * center_vs
-		vertices_cs := vertices_vs
-		for &v in vertices_cs do v = projection * v
-
-		center_ss := center_cs / center_cs.w
-		vertices_ss := vertices_cs
-		for &v in vertices_ss do v = v / v.w
-
-		radius_ss := Vec2{
-			abs(vertices_ss[0].x - center_ss.x),
-			abs(vertices_ss[0].y - center_ss.y),
+		for i in 0..<ROTATION_CIRCLE_SEGMENTS {
+			ANGLE_STEP :: math.TAU / ROTATION_CIRCLE_SEGMENTS
+			start_angle := f32(i) * ANGLE_STEP
+			end_angle := f32(i + 1) * ANGLE_STEP
+			start_point_ws: Vec4
+			end_point_ws: Vec4
+			switch axis {
+			case .X:
+				start_point_ws = s_gizmo.origin_ws + Vec4{ 0, math.sin(start_angle), math.cos(start_angle), 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
+				end_point_ws = s_gizmo.origin_ws + Vec4{ 0, math.sin(end_angle), math.cos(end_angle), 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
+			case .Y:
+				start_point_ws = s_gizmo.origin_ws + Vec4{ math.sin(start_angle), 0, math.cos(start_angle), 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
+				end_point_ws = s_gizmo.origin_ws + Vec4{ math.sin(end_angle), 0, math.cos(end_angle), 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
+			case .Z:
+				start_point_ws = s_gizmo.origin_ws + Vec4{ math.cos(start_angle), math.sin(start_angle), 0, 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
+				end_point_ws = s_gizmo.origin_ws + Vec4{ math.cos(end_angle), math.sin(end_angle), 0, 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
+			}
+			segment(s_gizmo.view * start_point_ws, s_gizmo.view * end_point_ws, axis)
 		}
-
-		append(&s_gizmo.ellipses, Ellipse{
-			center = center_ss.xyz,
-		 	radius = radius_ss,
-			axis = axis})
 	}
 
 	switch mode {
 	case .Translate:
-		translation_arrow(translation^, .X, projection, view)
-		translation_arrow(translation^, .Y, projection, view)
-		translation_arrow(translation^, .Z, projection, view)
+		translation_arrow(.X)
+		translation_arrow(.Y)
+		translation_arrow(.Z)
 	case .Rotate:
-		reference_line(translation^, .X, projection, view)
-		reference_line(translation^, .Y, projection, view)
-		reference_line(translation^, .Z, projection, view)
-		rotation_circle(translation^, rotation^, .X, projection, view)
-		// rotation_circle(translation^, rotation^, .Y, projection, view)
-		// rotation_circle(translation^, rotation^, .Z, projection, view)
-	case .Scale:
+		rotation_circle(.X)
+		rotation_circle(.Y)
+		rotation_circle(.Z)
 	}
 
 	if !mouse_pressed {
 		s_gizmo.selected_axis = nil
-		for triangle in s_gizmo.triangles {
-			if triangle_intersect(mouse_position, triangle) {
+		s_gizmo.original_rotation = rotation^
+		s_gizmo.reference_rotation_angle = nil
+		for triangle in s_triangles {
+			if point_triangle_intersect(mouse_position, triangle) {
 				s_gizmo.selected_axis = triangle.axis
 			}
 		}
 	}
-	s_gizmo.dragging = mouse_pressed && s_gizmo.selected_axis != nil
+	s_gizmo.interacting = mouse_pressed && s_gizmo.selected_axis != nil
 
 	switch mode {
 	case .Translate:
-		if s_gizmo.dragging {
+		if s_gizmo.interacting {
 			if mouse_position != s_gizmo.prev_mouse_position {
 				mouse_delta := mouse_position - s_gizmo.prev_mouse_position
 				axis := s_gizmo.selected_axis.(Axis)
 
 				axis_dir_ss := s_gizmo.axis_directions_ss[axis]
-				axis_depth_vs := s_gizmo.axis_depths_vs[axis]
 
 				movement := linalg.dot(linalg.normalize0(axis_dir_ss), linalg.normalize0(mouse_delta)) * linalg.length(mouse_delta)
-				movement *= axis_depth_vs
+				movement *= -s_gizmo.origin_vs.z
 				translation^ += axis_vectors[axis] * movement
 				value_changed = true
 			}
 		}
 	case .Rotate:
-	case .Scale:
+		if s_gizmo.interacting {
+			mouse_direction := linalg.normalize0(mouse_position - s_gizmo.origin_ss.xy)
+			angle: f32
+			if mouse_direction.y > 0 {
+				angle = linalg.angle_between(Vec2{ 1, 0 }, mouse_direction)
+			} else {
+				angle = linalg.angle_between(Vec2{ -1, 0 }, mouse_direction) + math.to_radians(f32(180))
+			}
+
+			if s_gizmo.reference_rotation_angle == nil do s_gizmo.reference_rotation_angle = angle
+
+			angle_diff := angle - s_gizmo.reference_rotation_angle.?
+
+			axis_vec := axis_vectors[s_gizmo.selected_axis.(Axis)]
+			axis_vec = linalg.face_forward(axis_vec, s_gizmo.camera_forward, axis_vec)
+			current_rotation := linalg.quaternion_angle_axis(angle_diff, axis_vec)
+			rotation^ = linalg.normalize(current_rotation * s_gizmo.original_rotation)
+			value_changed = true
+		}
 	}
 
-	s_gizmo.prev_mouse_position = mouse_position
-	s_gizmo.mouse_was_pressed = mouse_pressed
-	return
-}
-
-get_draw_data :: proc(allocator := context.temp_allocator) -> (draw_data: Draw_Data) {
-	draw_data.triangle_vertices = make([dynamic]Triangle_Vertex, allocator)
-	draw_data.ellipse_vertices = make([dynamic]Ellipse_Vertex, allocator)
-
-	highlight :: proc(color: Vec4, highlight: f32) -> Vec4 {
-		return linalg.clamp(color + Vec4{ 1, 1, 1, 1 } * highlight, Vec4{ 0, 0, 0, 0 }, Vec4{ 1, 1, 1, 1 })
-	}
-
-	for triangle in s_gizmo.triangles {
-		color := axis_colors[triangle.axis]
+	for triangle in s_triangles {
+		color := Vec4{ expand_values(axis_vectors[triangle.axis]), COLOR_ALPHA }
 		if triangle.axis == s_gizmo.selected_axis {
-			color = highlight(color, DRAGGING_HIGHLIGHT if s_gizmo.dragging else HOVERED_HIGHLIGHT)
+			highlight: f32 = INTERACT_HIGHLIGHT if s_gizmo.interacting else HOVER_HIGHLIGHT
+			color = linalg.clamp(color + Vec4(1) * highlight, Vec4(0), Vec4(1))
 		}
 
 		v1 := Triangle_Vertex{ position = triangle.p[0], color = color }
 		v2 := Triangle_Vertex{ position = triangle.p[1], color = color }
 		v3 := Triangle_Vertex{ position = triangle.p[2], color = color }
 
-		append(&draw_data.triangle_vertices, v1, v2, v3)
+		append(&s_triangle_vertices, v1, v2, v3)
 	}
 
-	for ellipse in s_gizmo.ellipses {
-		color := axis_colors[ellipse.axis]
-		if ellipse.axis == s_gizmo.selected_axis {
-			color = highlight(color, DRAGGING_HIGHLIGHT if s_gizmo.dragging else HOVERED_HIGHLIGHT)
-		}
-
-		radius_inner := ellipse.radius
-		radius_outer := ellipse.radius + Vec2{ 0.01, 0.01 }
-
-		v := [4]Ellipse_Vertex {
-			{ position = ellipse.center.xy + {  radius_outer.x,  radius_outer.y } },
-			{ position = ellipse.center.xy + { -radius_outer.x,  radius_outer.y } },
-			{ position = ellipse.center.xy + {  radius_outer.x, -radius_outer.y } },
-			{ position = ellipse.center.xy + { -radius_outer.x, -radius_outer.y } },
-		}
-
-		for &vertex in v {
-			vertex.color = color
-			vertex.center = ellipse.center.xy
-			vertex.radius_inner = radius_inner
-			vertex.radius_outer = radius_outer
-		}
-
-		append(&draw_data.ellipse_vertices, v[0], v[1], v[2])
-		append(&draw_data.ellipse_vertices, v[3], v[2], v[1])
-	}
-
-	{
-		// TEST ellipse vertices
-
-		// RADIUS_INNER_OUTER :: Vec2{ 0.2, 0.205 }
-		// CENTER :: Vec2{ -0.25, 0 }
-
-		// v1 := Ellipse_Vertex{ position = Vec3{ -0.5,  0.5, 0 }, color = X_COLOR, center = CENTER, radius_inner_outer = RADIUS_INNER_OUTER }
-		// v2 := Ellipse_Vertex{ position = Vec3{  0.0,  0.5, 0 }, color = X_COLOR, center = CENTER, radius_inner_outer = RADIUS_INNER_OUTER }
-		// v3 := Ellipse_Vertex{ position = Vec3{  0.0, -0.5, 0 }, color = X_COLOR, center = CENTER, radius_inner_outer = RADIUS_INNER_OUTER }
-
-		// v4 := Ellipse_Vertex{ position = Vec3{  0.0, -0.5, 0 }, color = X_COLOR, center = CENTER, radius_inner_outer = RADIUS_INNER_OUTER }
-		// v5 := Ellipse_Vertex{ position = Vec3{ -0.5,  0.5, 0 }, color = X_COLOR, center = CENTER, radius_inner_outer = RADIUS_INNER_OUTER }
-		// v6 := Ellipse_Vertex{ position = Vec3{ -0.5, -0.5, 0 }, color = X_COLOR, center = CENTER, radius_inner_outer = RADIUS_INNER_OUTER }
-
-		// append(&draw_data.ellipse_vertices, v3, v2, v1)
-		// append(&draw_data.ellipse_vertices, v4, v5, v6)
-	}
-
+	s_gizmo.prev_mouse_position = mouse_position
 	return
+}
+
+get_draw_data :: proc "contextless" () -> []Triangle_Vertex {
+	return s_triangle_vertices[:]
 }
 
 Triangle :: struct {
 	p: [3]Vec3,
-	axis: Axis,
-}
-
-Ellipse :: struct {
-	center: Vec3,
-	radius: Vec2,
 	axis: Axis,
 }
 
@@ -390,28 +300,8 @@ Triangle_Vertex :: struct {
 	color: Vec4,
 }
 
-Ellipse_Vertex :: struct {
-	position: Vec2,
-	color: Vec4,
-	center: Vec2,
-	radius_inner: Vec2,
-	radius_outer: Vec2,
-}
-
-// We could probably have a static buffer for the draw data, since the data has a defined max size. Then we would not
-// need to use dynamic arrays; we could use slices instead.
-Draw_Data :: struct {
-	triangle_vertices: [dynamic]Triangle_Vertex,
-	ellipse_vertices: [dynamic]Ellipse_Vertex,
-}
-
-free_draw_data :: proc(draw_data: Draw_Data) {
-	delete(draw_data.triangle_vertices)
-	delete(draw_data.ellipse_vertices)
-}
-
 @(private="file")
-triangle_intersect :: proc(point: Vec2, triangle: Triangle) -> bool {
+point_triangle_intersect :: proc "contextless" (point: Vec2, triangle: Triangle) -> bool {
 	v := [3]Vec2{ triangle.p[0].xy, triangle.p[1].xy, triangle.p[2].xy }
 
 	edge_dir0 := v[1] - v[0]
@@ -427,9 +317,4 @@ triangle_intersect :: proc(point: Vec2, triangle: Triangle) -> bool {
 	cross_2 := linalg.cross(edge_dir2, point_dir2)
 
 	return cross_0 >= 0 && cross_1 >= 0 && cross_2 >= 0
-}
-
-@(private="file")
-ellipse_intersect :: proc(point: Vec2, ellipse: Ellipse) -> bool {
-	return false
 }

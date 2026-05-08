@@ -7,6 +7,7 @@ import "glue"
 import imgui "glue/vendor/imgui"
 import gl "vendor:OpenGL"
 import "gizmo"
+import "vendor:glfw"
 
 import "core:log"
 import "core:slice"
@@ -48,6 +49,10 @@ WINDOW_HEIGHT :: 1080
 
 g_context: runtime.Context
 
+// TODO: Delete
+@(private="file")
+s_gizmo_draw_data_triangle_vertices_count: int
+
 main :: proc() {
 	context.logger = log.create_console_logger(.Debug when ODIN_DEBUG else .Info)
 	defer log.destroy_console_logger(context.logger)
@@ -70,10 +75,21 @@ main :: proc() {
 
 	g_context = context
 
-	if !glue.init(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, maximized = true) {
+	if !glue.init(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, maximized = true, vsync = false, fps_limit = 260) {
 		log.panic("Failed to create a window")
 	}
 	defer glue.deinit()
+
+	// TODO: Add fullscreen to glue.
+	monitor := glfw.GetPrimaryMonitor()
+	video_mode := glfw.GetVideoMode(monitor)
+	glfw.SetWindowMonitor(window = glue.window_handle(),
+			      monitor = monitor,
+			      xpos = 0,
+			      ypos = 0,
+			      width = video_mode.width,
+			      height = video_mode.height,
+			      refresh_rate = video_mode.refresh_rate)
 
 	glue.set_cursor_enabled(false)
 	glue.set_raw_mouse_motion_enabled(true)
@@ -87,15 +103,10 @@ main :: proc() {
 
 	gl.Enable(gl.DEPTH_TEST)
 
-	gizmo.init()
-	defer gizmo.deinit()
-
 	gizmo_triangles_vertex_format := []glue.Vertex_Attribute{ .Float_3, .Float_4 }
-	gizmo_ellipses_vertex_format := []glue.Vertex_Attribute{ .Float_2, .Float_4, .Float_2, .Float_2, .Float_2 }
 
 	gizmo_triangles_va: glue.Vertex_Array
 	gizmo_triangles_vb: glue.Gl_Buffer
-	// gizmo_quads_ib: glue.Gl_Buffer
 	glue.create_vertex_array(&gizmo_triangles_va)
 	defer glue.destroy_vertex_array(&gizmo_triangles_va)
 	glue.create_dynamic_gl_buffer(&gizmo_triangles_vb)
@@ -103,24 +114,10 @@ main :: proc() {
 	glue.set_vertex_array_format(gizmo_triangles_va, gizmo_triangles_vertex_format)
 	glue.bind_vertex_buffer(gizmo_triangles_va, gizmo_triangles_vb, size_of(gizmo.Triangle_Vertex))
 
-	gizmo_ellipses_va: glue.Vertex_Array
-	gizmo_ellipses_vb: glue.Gl_Buffer
-	glue.create_vertex_array(&gizmo_ellipses_va)
-	defer glue.destroy_vertex_array(&gizmo_ellipses_va)
-	glue.create_dynamic_gl_buffer(&gizmo_ellipses_vb)
-	defer glue.destroy_gl_buffer(&gizmo_ellipses_vb)
-	glue.set_vertex_array_format(gizmo_ellipses_va, gizmo_ellipses_vertex_format)
-	glue.bind_vertex_buffer(gizmo_ellipses_va, gizmo_ellipses_vb, size_of(gizmo.Ellipse_Vertex))
-
 	gizmo_triangle_shader, gizmo_triangle_shader_ok := glue.create_shader(#load("shaders/gizmo_triangle.vert"),
 									      #load("shaders/gizmo_triangle.frag"))
 	if !gizmo_triangle_shader_ok do log.panic("Failed to compile the gizmo triangle shader.")
 	defer glue.destroy_shader(gizmo_triangle_shader)
-
-	gizmo_ellipse_shader, gizmo_ellipse_shader_ok := glue.create_shader(#load("shaders/gizmo_ellipse.vert"),
-									  #load("shaders/gizmo_ellipse.frag"))
-	if !gizmo_ellipse_shader_ok do log.panic("Failed to compile the gizmo ellipse shader.")
-	defer glue.destroy_shader(gizmo_ellipse_shader)
 
 	cube_mesh := glue.create_mesh(vertices = slice.to_bytes(cube_vertices[:]),
 				      vertex_stride = size_of(Vertex_3D),
@@ -163,9 +160,10 @@ main :: proc() {
 	glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
 
 	cube_translation := Vec3{ 0, 0, -1 }
-	cube_rotation: Quat
-	cube_scale := Vec3{ 1, 1, 1 }
+	cube_rotation := Quat(1)
+	cube_scale := Vec3(1)
 	gizmo_mode := gizmo.Mode.Rotate
+	// gizmo_mode := gmo.Mode.Translate
 
 	prev_time := glue.time()
 
@@ -186,7 +184,7 @@ main :: proc() {
 
 		if !glue.cursor_enabled() {
 			LOOK_SPEED :: 1
-			cursor_position_delta := linalg.array_cast(glue.cursor_position_delta(), f32)
+			cursor_position_delta := cast(Vec2)glue.cursor_position_delta()
 			camera.yaw += cursor_position_delta.x * LOOK_SPEED * 0.001
 			camera.pitch += -cursor_position_delta.y * LOOK_SPEED * 0.001
 			camera.pitch = clamp(camera.pitch, math.to_radians(f32(-89)), math.to_radians(f32(89)))
@@ -208,6 +206,12 @@ main :: proc() {
 		if imgui.ColorEdit4("Lit Color", &lit_color) do glue.set_uniform(lit_shader, COLOR_UNIFORM, lit_color)
 		if imgui.ColorEdit4("Unlit Color", &unlit_color) do glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
 		imgui_enum_select("Gizmo Mode", &gizmo_mode)
+		imgui.TextUnformatted(fmt.ctprintf("Camera Forward = %v", camera_vectors.forward))
+		imgui.TextUnformatted(fmt.ctprintf("TRANSLATION TRIANGLE COUNT = %v", gizmo.TRANSLATION_TRIANGLE_COUNT))
+		imgui.TextUnformatted(fmt.ctprintf("ROTATION TRIANGLE COUNT = %v", gizmo.ROTATION_TRIANGLE_COUNT))
+		imgui.TextUnformatted(fmt.ctprintf("MAX TRIANGLES = %v", gizmo.MAX_TRIANGLES))
+		imgui.TextUnformatted(fmt.ctprintf("actual returned triangle count = %v", s_gizmo_draw_data_triangle_vertices_count / 3))
+		imgui.TextUnformatted(fmt.ctprintf("size_of(Gizmo) = %v", size_of(gizmo.Gizmo)))
 		imgui.End()
 
 		view := linalg.matrix4_look_at(eye = camera.position,
@@ -222,7 +226,7 @@ main :: proc() {
 		gizmo.manipulate(mode = gizmo_mode,
 				 translation = &cube_translation,
 				 rotation = &cube_rotation,
-				 mouse_position = linalg.array_cast(ndc_cursor_pos, f32),
+				 mouse_position = cast(Vec2)ndc_cursor_pos,
 				 mouse_pressed = glue.mouse_button_pressed(.Left),
 				 view = view,
 				 projection = projection)
@@ -277,27 +281,16 @@ main :: proc() {
 			// wasteful.
 			gl.Clear(gl.DEPTH_BUFFER_BIT)
 
-			gizmo_draw_data := gizmo.get_draw_data()
-			defer gizmo.free_draw_data(gizmo_draw_data)
+			gizmo_triangle_vertices := gizmo.get_draw_data()
+			s_gizmo_draw_data_triangle_vertices_count = len(gizmo_triangle_vertices)
 
-			glue.upload_dynamic_gl_buffer_data(&gizmo_triangles_vb, slice.to_bytes(gizmo_draw_data.triangle_vertices[:]))
+			glue.upload_dynamic_gl_buffer_data(&gizmo_triangles_vb, slice.to_bytes(gizmo_triangle_vertices[:]))
 
 			glue.use_shader(gizmo_triangle_shader)
 			glue.bind_vertex_array(gizmo_triangles_va)
 			gl.DrawArrays(gl.TRIANGLES,
 				      0,
-				      cast(i32)len(gizmo_draw_data.triangle_vertices))
-
-			gl.Disable(gl.DEPTH_TEST)
-			defer gl.Enable(gl.DEPTH_TEST)
-
-			glue.upload_dynamic_gl_buffer_data(&gizmo_ellipses_vb, slice.to_bytes(gizmo_draw_data.ellipse_vertices[:]))
-
-			glue.use_shader(gizmo_ellipse_shader)
-			glue.bind_vertex_array(gizmo_ellipses_va)
-			gl.DrawArrays(gl.TRIANGLES,
-				      0,
-				      cast(i32)len(gizmo_draw_data.ellipse_vertices))
+				      cast(i32)len(gizmo_triangle_vertices))
 		}
 
 		glue.end_frame()
@@ -311,7 +304,7 @@ set_clear_color :: proc(color: Vec4) {
 
 get_normalized_cursor_position :: proc() -> [2]f64 {
 	pos := glue.cursor_position()
-	window_size := linalg.array_cast(glue.window_size(), f64)
+	window_size := cast([2]f64)glue.window_size()
 	pos = pos / window_size * 2 - 1
 	pos.y = -pos.y
 	return pos
