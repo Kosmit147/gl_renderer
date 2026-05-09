@@ -192,8 +192,8 @@ main :: proc() {
 
 		camera_vectors := glue.camera_vectors(camera)
 
-		BASE_MOVEMENT_SPEED :: 1
-		SPRINT_MOVEMENT_SPEED :: 5
+		BASE_MOVEMENT_SPEED :: 0.3
+		SPRINT_MOVEMENT_SPEED :: 2
 		movement_speed: f32 = BASE_MOVEMENT_SPEED
 		if glue.key_pressed(.Left_Shift) do movement_speed = SPRINT_MOVEMENT_SPEED
 		if glue.key_pressed(.W) do camera.position += camera_vectors.forward * movement_speed * dt
@@ -214,9 +214,10 @@ main :: proc() {
 		imgui.TextUnformatted(fmt.ctprintf("size_of(Gizmo) = %v", size_of(gizmo.Gizmo)))
 		imgui.End()
 
-		view := linalg.matrix4_look_at(eye = camera.position,
-					       centre = camera.position + camera_vectors.forward,
-					       up = camera_vectors.up)
+		view := linalg.matrix4_look_at_from_fru(camera.position,
+							camera_vectors.forward,
+							camera_vectors.right,
+							camera_vectors.up)
 		projection := linalg.matrix4_perspective(fovy = math.to_radians(f32(45)),
 							 aspect = glue.window_aspect_ratio(),
 							 near = 0.1,

@@ -13,6 +13,7 @@ import "core:math/linalg"
 // - Ability to perform operations in local space instead of world space.
 // - Support generic types instead of just f32s.
 // - Should work with any either left-handed or right-handed, y-down or y-up coordinate systems.
+// - Should work with orthographic projection.
 
 GIZMO_SIZE               :: 0.1
 LINE_LENGTH              :: 0.2
@@ -46,6 +47,13 @@ axis_vectors := [Axis]Vec3{
 	.Z = { 0, 0, 1 },
 }
 
+@(rodata)
+axis_plane_normals := [Axis]Vec3{
+	.X = { 0, 1, 0 },
+	.Y = { 0, 0, 1 },
+	.Z = { 0, 1, 0 },
+}
+
 HOVER_HIGHLIGHT    :: 0.15
 INTERACT_HIGHLIGHT :: 0.3
 COLOR_ALPHA        :: 0.7
@@ -60,6 +68,8 @@ Gizmo :: struct {
 	projection: Mat4,
 	aspect_ratio: f32,
 	camera_forward: Vec3,
+	camera_position: Vec3,
+	mouse_ray: Ray,
 
 	// Probably don't need to save all of these.
 	origin_ws: Vec4,
@@ -68,10 +78,6 @@ Gizmo :: struct {
 	origin_ss: Vec4,
 
 	selected_axis: Maybe(Axis),
-
-	// In screen space. Saving multiple of these per axis could probably be avoided if we opted to resolve triangle
-	// intersections instantly instead of deferring them?
-	axis_directions_ss: [Axis]Vec2,
 
 	interacting: bool,
 	original_rotation: Quat,
@@ -84,9 +90,6 @@ Gizmo :: struct {
 s_gizmo: Gizmo
 
 @(private="file")
-s_triangles: [dynamic; MAX_TRIANGLES]Triangle
-
-@(private="file")
 s_triangle_vertices: [dynamic; MAX_TRIANGLE_VERTICES]Triangle_Vertex
 
 manipulate :: proc "contextless" (mode: Mode,
@@ -96,20 +99,31 @@ manipulate :: proc "contextless" (mode: Mode,
 				  mouse_pressed: bool,
 				  view: Mat4,
 				  projection: Mat4) -> (value_changed := false) {
-	clear(&s_triangles)
+	triangles: [dynamic; MAX_TRIANGLES]Triangle
 	clear(&s_triangle_vertices)
+
+	view_inverse := linalg.inverse(view)
+	projection_inverse := linalg.inverse(projection)
 
 	s_gizmo.view = view
 	s_gizmo.projection = projection
 	s_gizmo.aspect_ratio = projection[1, 1] / projection[0, 0]
 	s_gizmo.camera_forward = -Vec3{ view[2, 0], view[2, 1], view[2, 2] }
+	s_gizmo.camera_position = (view_inverse * Vec4{ 0, 0, 0, 1 }).xyz
+
+	{
+		ray_cs := Vec4{ expand_values(mouse_position), -1, 1 }
+		ray_vs := projection_inverse * ray_cs
+		ray_direction := linalg.normalize((view_inverse * Vec4{ expand_values(ray_vs.xyz), 0 }).xyz)
+		s_gizmo.mouse_ray = Ray{ origin = s_gizmo.camera_position, direction = ray_direction }
+	}
 
 	s_gizmo.origin_ws = Vec4{ expand_values(translation^), 1 }
 	s_gizmo.origin_vs = view * s_gizmo.origin_ws
 	s_gizmo.origin_cs = projection * s_gizmo.origin_vs
 	s_gizmo.origin_ss = s_gizmo.origin_cs / s_gizmo.origin_cs.w
 
-	translation_arrow :: proc "contextless" (axis: Axis) {
+	translation_arrow :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		line_end_ws := s_gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * GIZMO_SIZE
 		arrow_tip_ws := line_end_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * ARROW_HEIGHT
 
@@ -123,7 +137,6 @@ manipulate :: proc "contextless" (mode: Mode,
 		arrow_tip_ss := arrow_tip_cs / arrow_tip_cs.w
 
 		line_direction_ss := linalg.normalize0((line_end_ss - s_gizmo.origin_ss).xy)
-		s_gizmo.axis_directions_ss[axis] = line_direction_ss
 		line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
 		line_direction_orthogonal_ss.x /= s_gizmo.aspect_ratio
 		line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
@@ -141,7 +154,7 @@ manipulate :: proc "contextless" (mode: Mode,
 			t1 := Triangle{ { p1, p2, p3 }, axis }
 			t2 := Triangle{ { p4, p3, p2 }, axis }
 
-			append(&s_triangles, t1, t2)
+			append(triangles, t1, t2)
 		}
 
 		{
@@ -153,14 +166,15 @@ manipulate :: proc "contextless" (mode: Mode,
 			p2 := line_end_ss.xyz - arrow_width
 			p3 := arrow_tip_ss.xyz
 
-			append(&s_triangles, Triangle{ { p1, p2, p3 }, axis })
+			append(triangles, Triangle{ { p1, p2, p3 }, axis })
 		}
 	}
 
-	rotation_circle :: proc "contextless" (axis: Axis) {
+	rotation_circle :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		segment :: proc "contextless" (start_vs: Vec4,
 					       end_vs: Vec4,
-					       axis: Axis) {
+					       axis: Axis,
+					       triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 			start_cs := s_gizmo.projection * start_vs
 			end_cs := s_gizmo.projection * end_vs
 
@@ -184,7 +198,7 @@ manipulate :: proc "contextless" (mode: Mode,
 			t1 := Triangle{ { p1, p2, p3 }, axis }
 			t2 := Triangle{ { p4, p3, p2 }, axis }
 
-			append(&s_triangles, t1, t2)
+			append(triangles, t1, t2)
 		}
 
 		for i in 0..<ROTATION_CIRCLE_SEGMENTS {
@@ -204,26 +218,26 @@ manipulate :: proc "contextless" (mode: Mode,
 				start_point_ws = s_gizmo.origin_ws + Vec4{ math.cos(start_angle), math.sin(start_angle), 0, 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
 				end_point_ws = s_gizmo.origin_ws + Vec4{ math.cos(end_angle), math.sin(end_angle), 0, 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
 			}
-			segment(s_gizmo.view * start_point_ws, s_gizmo.view * end_point_ws, axis)
+			segment(s_gizmo.view * start_point_ws, s_gizmo.view * end_point_ws, axis, triangles)
 		}
 	}
 
 	switch mode {
 	case .Translate:
-		translation_arrow(.X)
-		translation_arrow(.Y)
-		translation_arrow(.Z)
+		translation_arrow(.X, &triangles)
+		translation_arrow(.Y, &triangles)
+		translation_arrow(.Z, &triangles)
 	case .Rotate:
-		rotation_circle(.X)
-		rotation_circle(.Y)
-		rotation_circle(.Z)
+		rotation_circle(.X, &triangles)
+		rotation_circle(.Y, &triangles)
+		rotation_circle(.Z, &triangles)
 	}
 
 	if !mouse_pressed {
 		s_gizmo.selected_axis = nil
 		s_gizmo.original_rotation = rotation^
 		s_gizmo.reference_rotation_angle = nil
-		for triangle in s_triangles {
+		for triangle in triangles {
 			if point_triangle_intersect(mouse_position, triangle) {
 				s_gizmo.selected_axis = triangle.axis
 			}
@@ -234,15 +248,22 @@ manipulate :: proc "contextless" (mode: Mode,
 	switch mode {
 	case .Translate:
 		if s_gizmo.interacting {
-			if mouse_position != s_gizmo.prev_mouse_position {
-				mouse_delta := mouse_position - s_gizmo.prev_mouse_position
-				axis := s_gizmo.selected_axis.(Axis)
+			axis := s_gizmo.selected_axis.?
 
-				axis_dir_ss := s_gizmo.axis_directions_ss[axis]
+			axis_plane := Plane {
+				normal = axis_plane_normals[axis],
+				point = translation^,
+			}
 
-				movement := linalg.dot(linalg.normalize0(axis_dir_ss), linalg.normalize0(mouse_delta)) * linalg.length(mouse_delta)
-				movement *= -s_gizmo.origin_vs.z
-				translation^ += axis_vectors[axis] * movement
+			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray, axis_plane)
+
+			if plane_hit {
+				switch axis {
+				case .X: translation.x = hit_point.x
+				case .Y: translation.y = hit_point.y
+				case .Z: translation.z = hit_point.z
+				}
+
 				value_changed = true
 			}
 		}
@@ -260,7 +281,7 @@ manipulate :: proc "contextless" (mode: Mode,
 
 			angle_diff := angle - s_gizmo.reference_rotation_angle.?
 
-			axis_vec := axis_vectors[s_gizmo.selected_axis.(Axis)]
+			axis_vec := axis_vectors[s_gizmo.selected_axis.?]
 			axis_vec = linalg.face_forward(axis_vec, s_gizmo.camera_forward, axis_vec)
 			current_rotation := linalg.quaternion_angle_axis(angle_diff, axis_vec)
 			rotation^ = linalg.normalize(current_rotation * s_gizmo.original_rotation)
@@ -268,7 +289,7 @@ manipulate :: proc "contextless" (mode: Mode,
 		}
 	}
 
-	for triangle in s_triangles {
+	for triangle in triangles {
 		color := Vec4{ expand_values(axis_vectors[triangle.axis]), COLOR_ALPHA }
 		if triangle.axis == s_gizmo.selected_axis {
 			highlight: f32 = INTERACT_HIGHLIGHT if s_gizmo.interacting else HOVER_HIGHLIGHT
@@ -290,14 +311,24 @@ get_draw_data :: proc "contextless" () -> []Triangle_Vertex {
 	return s_triangle_vertices[:]
 }
 
+Triangle_Vertex :: struct {
+	position: Vec3,
+	color: Vec4,
+}
+
 Triangle :: struct {
 	p: [3]Vec3,
 	axis: Axis,
 }
 
-Triangle_Vertex :: struct {
-	position: Vec3,
-	color: Vec4,
+Ray :: struct {
+	origin: Vec3,
+	direction: Vec3,
+}
+
+Plane :: struct {
+	normal: Vec3,
+	point: Vec3,
 }
 
 @(private="file")
@@ -317,4 +348,13 @@ point_triangle_intersect :: proc "contextless" (point: Vec2, triangle: Triangle)
 	cross_2 := linalg.cross(edge_dir2, point_dir2)
 
 	return cross_0 >= 0 && cross_1 >= 0 && cross_2 >= 0
+}
+
+@(private="file")
+ray_plane_intersect :: proc "contextless" (ray: Ray, plane: Plane) -> (Vec3, bool) {
+	num := linalg.dot(linalg.normalize0(plane.normal), plane.point - ray.origin)
+	denom := linalg.dot(linalg.normalize0(plane.normal), linalg.normalize0(ray.direction))
+	if num == 0 || denom == 0 do return {}, false
+	t := num / denom
+	return ray.origin + ray.direction * t, t > 0
 }
