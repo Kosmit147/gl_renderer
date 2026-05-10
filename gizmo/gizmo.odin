@@ -79,7 +79,6 @@ Gizmo :: struct {
 
 	selected_axis: Maybe(Axis),
 
-	interacting: bool,
 	original_translation: Maybe(Vec3),
 	reference_translation_value: Maybe(f32),
 	original_rotation: Maybe(Quat),
@@ -259,11 +258,11 @@ manipulate :: proc "contextless" (mode: Mode,
 			}
 		}
 	}
-	s_gizmo.interacting = mouse_pressed && s_gizmo.selected_axis != nil
+	interacting := mouse_pressed && s_gizmo.selected_axis != nil
 
 	switch mode {
 	case .Translate:
-		if s_gizmo.interacting {
+		if interacting {
 			axis := s_gizmo.selected_axis.?
 
 			translation_plane := Plane {
@@ -293,7 +292,7 @@ manipulate :: proc "contextless" (mode: Mode,
 			}
 		}
 	case .Rotate:
-		if s_gizmo.interacting {
+		if interacting {
 			axis := s_gizmo.selected_axis.?
 
 			rotation_plane := Plane {
@@ -331,7 +330,7 @@ manipulate :: proc "contextless" (mode: Mode,
 	for triangle in triangles {
 		color := Vec4{ expand_values(axis_vectors[triangle.axis]), COLOR_ALPHA }
 		if triangle.axis == s_gizmo.selected_axis {
-			highlight: f32 = INTERACT_HIGHLIGHT if s_gizmo.interacting else HOVER_HIGHLIGHT
+			highlight: f32 = INTERACT_HIGHLIGHT if interacting else HOVER_HIGHLIGHT
 			color = linalg.clamp(color + Vec4(1) * highlight, Vec4(0), Vec4(1))
 		}
 
