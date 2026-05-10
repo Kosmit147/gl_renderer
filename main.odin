@@ -162,8 +162,7 @@ main :: proc() {
 	cube_translation := Vec3{ 0, 0, -1 }
 	cube_rotation := Quat(1)
 	cube_scale := Vec3(1)
-	gizmo_mode := gizmo.Mode.Rotate
-	// gizmo_mode := gmo.Mode.Translate
+	gizmo_mode := gizmo.Mode.Translate
 
 	prev_time := glue.time()
 
@@ -272,15 +271,8 @@ main :: proc() {
 		}
 
 		{
-			// GIZMO
-			// gl.Disable(gl.DEPTH_TEST)
-			// defer gl.Enable(gl.DEPTH_TEST)
-			// gl.Disable(gl.CULL_FACE)
-			// defer gl.Enable(gl.CULL_FACE)
-
-			// We should probably sort the triangles instead of clearing the depth buffer. That seems
-			// wasteful.
-			gl.Clear(gl.DEPTH_BUFFER_BIT)
+			gl.Disable(gl.DEPTH_TEST)
+			defer gl.Enable(gl.DEPTH_TEST)
 
 			gizmo_triangle_vertices := gizmo.get_draw_data()
 			s_gizmo_draw_data_triangle_vertices_count = len(gizmo_triangle_vertices)

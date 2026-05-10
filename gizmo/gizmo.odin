@@ -1,7 +1,10 @@
 package gizmo
 
+import "base:runtime"
+
 import "core:math"
 import "core:math/linalg"
+import "core:slice"
 
 // TODO:
 // - Scale (do circles or cubes at the ends of the lines instead of arrows).
@@ -15,7 +18,8 @@ import "core:math/linalg"
 // - Should work with any either left-handed or right-handed, y-down or y-up coordinate systems.
 // - Should work with orthographic projection.
 // - When performing an operation on one axis, visuals for other axes should disappear (e. g. when rotating along the X
-// axis, the rotation circles for Y and Z axes should disappear)
+// axis, the rotation circles for Y and Z axes should disappear).
+// - Make sure it's not too slow.
 
 GIZMO_SIZE               :: 0.06
 LINE_THICKNESS           :: 0.004
@@ -57,7 +61,7 @@ translation_plane_normals := [Axis]Vec3{
 
 HOVER_HIGHLIGHT    :: 0.15
 INTERACT_HIGHLIGHT :: 0.3
-COLOR_ALPHA        :: 0.7
+COLOR_ALPHA        :: 0.8
 
 Mode :: enum {
 	Translate,
@@ -119,6 +123,16 @@ manipulate :: proc "contextless" (mode: Mode,
 		s_gizmo.mouse_ray = Ray{ origin = camera_position, direction = ray_direction }
 	}
 
+	add_triangle :: proc "contextless" (p1, p2, p3: Vec3,
+					    axis: Axis,
+					    triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+		append(triangles, Triangle {
+			points = { p1.xy, p2.xy, p3.xy },
+			depth = (p1.z + p2.z + p3.z) / 3,
+			axis = axis,
+		})
+	}
+
 	translation_arrow :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		line_end_ws := s_gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * GIZMO_SIZE
 		arrow_tip_ws := line_end_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * ARROW_HEIGHT
@@ -147,10 +161,8 @@ manipulate :: proc "contextless" (mode: Mode,
 			p3 := line_end_ss.xyz + line_width
 			p4 := line_end_ss.xyz - line_width
 
-			t1 := Triangle{ { p1, p2, p3 }, axis }
-			t2 := Triangle{ { p4, p3, p2 }, axis }
-
-			append(triangles, t1, t2)
+			add_triangle(p1, p2, p3, axis, triangles)
+			add_triangle(p4, p3, p2, axis, triangles)
 		}
 
 		{
@@ -162,7 +174,7 @@ manipulate :: proc "contextless" (mode: Mode,
 			p2 := line_end_ss.xyz - arrow_width
 			p3 := arrow_tip_ss.xyz
 
-			append(triangles, Triangle{ { p1, p2, p3 }, axis })
+			add_triangle(p1, p2, p3, axis, triangles)
 		}
 	}
 
@@ -194,10 +206,8 @@ manipulate :: proc "contextless" (mode: Mode,
 			p3 := end_ss.xyz + line_width
 			p4 := end_ss.xyz - line_width
 
-			t1 := Triangle{ { p1, p2, p3 }, axis }
-			t2 := Triangle{ { p4, p3, p2 }, axis }
-
-			append(triangles, t1, t2)
+			add_triangle(p1, p2, p3, axis, triangles)
+			add_triangle(p4, p3, p2, axis, triangles)
 		}
 
 		for i in 0..<ROTATION_CIRCLE_SEGMENTS {
@@ -232,6 +242,11 @@ manipulate :: proc "contextless" (mode: Mode,
 		rotation_circle(.X, &triangles)
 		rotation_circle(.Y, &triangles)
 		rotation_circle(.Z, &triangles)
+	}
+
+	{
+		context = runtime.Context{}
+		slice.sort_by(triangles[:], proc(i, j: Triangle) -> bool { return i.depth > j.depth })
 	}
 
 	if !mouse_pressed {
@@ -322,10 +337,9 @@ manipulate :: proc "contextless" (mode: Mode,
 			color = linalg.clamp(color + Vec4(1) * highlight, Vec4(0), Vec4(1))
 		}
 
-		v1 := Triangle_Vertex{ position = triangle.p[0], color = color }
-		v2 := Triangle_Vertex{ position = triangle.p[1], color = color }
-		v3 := Triangle_Vertex{ position = triangle.p[2], color = color }
-
+		v1 := Triangle_Vertex{ position = { expand_values(triangle.points[0]), triangle.depth }, color = color }
+		v2 := Triangle_Vertex{ position = { expand_values(triangle.points[1]), triangle.depth }, color = color }
+		v3 := Triangle_Vertex{ position = { expand_values(triangle.points[2]), triangle.depth }, color = color }
 		append(&s_triangle_vertices, v1, v2, v3)
 	}
 
@@ -342,7 +356,8 @@ Triangle_Vertex :: struct {
 }
 
 Triangle :: struct {
-	p: [3]Vec3,
+	points: [3]Vec2,
+	depth: f32,
 	axis: Axis,
 }
 
@@ -358,7 +373,7 @@ Plane :: struct {
 
 @(private="file")
 point_triangle_intersect :: proc "contextless" (point: Vec2, triangle: Triangle) -> bool {
-	v := [3]Vec2{ triangle.p[0].xy, triangle.p[1].xy, triangle.p[2].xy }
+	v := triangle.points
 
 	edge_dir0 := v[1] - v[0]
 	edge_dir1 := v[2] - v[1]
