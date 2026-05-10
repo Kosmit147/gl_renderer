@@ -14,6 +14,8 @@ import "core:math/linalg"
 // - Support generic types instead of just f32s.
 // - Should work with any either left-handed or right-handed, y-down or y-up coordinate systems.
 // - Should work with orthographic projection.
+// - When performing an operation on one axis, visuals for other axes should disappear (e. g. when rotating along the X
+// axis, the rotation circles for Y and Z axes should disappear)
 
 GIZMO_SIZE               :: 0.06
 LINE_LENGTH              :: 0.2
@@ -80,6 +82,10 @@ Gizmo :: struct {
 	selected_axis: Maybe(Axis),
 
 	interacting: bool,
+	original_translation: Maybe(Vec3),
+	reference_translation_value: Maybe(f32),
+	original_rotation: Maybe(Quat),
+	reference_rotation_angle: Maybe(f32),
 
 	prev_mouse_position: Vec2, // In NDC.
 }
@@ -233,6 +239,10 @@ manipulate :: proc "contextless" (mode: Mode,
 
 	if !mouse_pressed {
 		s_gizmo.selected_axis = nil
+		s_gizmo.original_translation = nil
+		s_gizmo.reference_translation_value = nil
+		s_gizmo.original_rotation = nil
+		s_gizmo.reference_rotation_angle = nil
 		for triangle in triangles {
 			if point_triangle_intersect(mouse_position, triangle) {
 				s_gizmo.selected_axis = triangle.axis
@@ -254,12 +264,21 @@ manipulate :: proc "contextless" (mode: Mode,
 			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray, translation_plane)
 
 			if plane_hit {
+				if s_gizmo.original_translation == nil do s_gizmo.original_translation = translation^
+				translation_change: Vec3
 				switch axis {
-				case .X: translation.x = hit_point.x
-				case .Y: translation.y = hit_point.y
-				case .Z: translation.z = hit_point.z
+				case .X:
+					if s_gizmo.reference_translation_value == nil do s_gizmo.reference_translation_value = hit_point.x
+					translation_change.x = hit_point.x - s_gizmo.reference_translation_value.?
+				case .Y:
+					if s_gizmo.reference_translation_value == nil do s_gizmo.reference_translation_value = hit_point.y
+					translation_change.y = hit_point.y - s_gizmo.reference_translation_value.?
+				case .Z:
+					if s_gizmo.reference_translation_value == nil do s_gizmo.reference_translation_value = hit_point.z
+					translation_change.z = hit_point.z - s_gizmo.reference_translation_value.?
 				}
 
+				translation^ = s_gizmo.original_translation.? + translation_change
 				value_changed = true
 			}
 		}
@@ -275,6 +294,7 @@ manipulate :: proc "contextless" (mode: Mode,
 			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray, rotation_plane)
 
 			if plane_hit {
+				if s_gizmo.original_rotation == nil do s_gizmo.original_rotation = rotation^
 				angle_vec: Vec2
 				switch axis {
 				case .X: angle_vec = linalg.normalize0(hit_point.yz - translation.yz)
@@ -289,7 +309,10 @@ manipulate :: proc "contextless" (mode: Mode,
 					angle = linalg.angle_between(Vec2{ -1, 0 }, angle_vec) + math.to_radians(f32(180))
 				}
 
-				rotation^ = linalg.normalize(linalg.quaternion_angle_axis(angle, axis_vectors[axis]))
+				if s_gizmo.reference_rotation_angle == nil do s_gizmo.reference_rotation_angle = angle
+				angle_change := angle - s_gizmo.reference_rotation_angle.?
+				rotation_change := linalg.quaternion_angle_axis(angle_change, axis_vectors[axis])
+				rotation^ = linalg.normalize(rotation_change * s_gizmo.original_rotation.?)
 				value_changed = true
 			}
 		}
