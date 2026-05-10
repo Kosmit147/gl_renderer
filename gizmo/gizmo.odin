@@ -15,7 +15,7 @@ import "core:math/linalg"
 // - Should work with any either left-handed or right-handed, y-down or y-up coordinate systems.
 // - Should work with orthographic projection.
 
-GIZMO_SIZE               :: 0.1
+GIZMO_SIZE               :: 0.06
 LINE_LENGTH              :: 0.2
 LINE_THICKNESS           :: 0.004
 ARROW_WIDTH              :: 0.02
@@ -48,7 +48,7 @@ axis_vectors := [Axis]Vec3{
 }
 
 @(rodata)
-axis_plane_normals := [Axis]Vec3{
+translation_plane_normals := [Axis]Vec3{
 	.X = { 0, 1, 0 },
 	.Y = { 0, 0, 1 },
 	.Z = { 0, 1, 0 },
@@ -80,8 +80,6 @@ Gizmo :: struct {
 	selected_axis: Maybe(Axis),
 
 	interacting: bool,
-	original_rotation: Quat,
-	reference_rotation_angle: Maybe(f32),
 
 	prev_mouse_position: Vec2, // In NDC.
 }
@@ -235,8 +233,6 @@ manipulate :: proc "contextless" (mode: Mode,
 
 	if !mouse_pressed {
 		s_gizmo.selected_axis = nil
-		s_gizmo.original_rotation = rotation^
-		s_gizmo.reference_rotation_angle = nil
 		for triangle in triangles {
 			if point_triangle_intersect(mouse_position, triangle) {
 				s_gizmo.selected_axis = triangle.axis
@@ -250,12 +246,12 @@ manipulate :: proc "contextless" (mode: Mode,
 		if s_gizmo.interacting {
 			axis := s_gizmo.selected_axis.?
 
-			axis_plane := Plane {
-				normal = axis_plane_normals[axis],
+			translation_plane := Plane {
+				normal = translation_plane_normals[axis],
 				point = translation^,
 			}
 
-			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray, axis_plane)
+			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray, translation_plane)
 
 			if plane_hit {
 				switch axis {
@@ -269,23 +265,33 @@ manipulate :: proc "contextless" (mode: Mode,
 		}
 	case .Rotate:
 		if s_gizmo.interacting {
-			mouse_direction := linalg.normalize0(mouse_position - s_gizmo.origin_ss.xy)
-			angle: f32
-			if mouse_direction.y > 0 {
-				angle = linalg.angle_between(Vec2{ 1, 0 }, mouse_direction)
-			} else {
-				angle = linalg.angle_between(Vec2{ -1, 0 }, mouse_direction) + math.to_radians(f32(180))
+			axis := s_gizmo.selected_axis.?
+
+			rotation_plane := Plane {
+				normal = axis_vectors[axis],
+				point = translation^,
 			}
 
-			if s_gizmo.reference_rotation_angle == nil do s_gizmo.reference_rotation_angle = angle
+			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray, rotation_plane)
 
-			angle_diff := angle - s_gizmo.reference_rotation_angle.?
+			if plane_hit {
+				angle_vec: Vec2
+				switch axis {
+				case .X: angle_vec = linalg.normalize0(hit_point.yz - translation.yz)
+				case .Y: angle_vec = linalg.normalize0(hit_point.zx - translation.zx)
+				case .Z: angle_vec = linalg.normalize0(hit_point.xy - translation.xy)
+				}
 
-			axis_vec := axis_vectors[s_gizmo.selected_axis.?]
-			axis_vec = linalg.face_forward(axis_vec, s_gizmo.camera_forward, axis_vec)
-			current_rotation := linalg.quaternion_angle_axis(angle_diff, axis_vec)
-			rotation^ = linalg.normalize(current_rotation * s_gizmo.original_rotation)
-			value_changed = true
+				angle: f32
+				if angle_vec.y > 0 {
+					angle = linalg.angle_between(Vec2{ 1, 0 }, angle_vec)
+				} else {
+					angle = linalg.angle_between(Vec2{ -1, 0 }, angle_vec) + math.to_radians(f32(180))
+				}
+
+				rotation^ = linalg.normalize(linalg.quaternion_angle_axis(angle, axis_vectors[axis]))
+				value_changed = true
+			}
 		}
 	}
 
