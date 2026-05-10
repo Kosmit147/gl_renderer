@@ -18,7 +18,6 @@ import "core:math/linalg"
 // axis, the rotation circles for Y and Z axes should disappear)
 
 GIZMO_SIZE               :: 0.06
-LINE_LENGTH              :: 0.2
 LINE_THICKNESS           :: 0.004
 ARROW_WIDTH              :: 0.02
 ARROW_HEIGHT             :: 0.02
@@ -69,11 +68,8 @@ Gizmo :: struct {
 	view: Mat4,
 	projection: Mat4,
 	aspect_ratio: f32,
-	camera_forward: Vec3,
-	camera_position: Vec3,
 	mouse_ray: Ray,
 
-	// Probably don't need to save all of these.
 	origin_ws: Vec4,
 	origin_vs: Vec4,
 	origin_cs: Vec4,
@@ -86,8 +82,6 @@ Gizmo :: struct {
 	reference_translation_value: Maybe(f32),
 	original_rotation: Maybe(Quat),
 	reference_rotation_angle: Maybe(f32),
-
-	prev_mouse_position: Vec2, // In NDC.
 }
 
 @(private="file")
@@ -112,20 +106,18 @@ manipulate :: proc "contextless" (mode: Mode,
 	s_gizmo.view = view
 	s_gizmo.projection = projection
 	s_gizmo.aspect_ratio = projection[1, 1] / projection[0, 0]
-	s_gizmo.camera_forward = -Vec3{ view[2, 0], view[2, 1], view[2, 2] }
-	s_gizmo.camera_position = (view_inverse * Vec4{ 0, 0, 0, 1 }).xyz
-
-	{
-		ray_cs := Vec4{ expand_values(mouse_position), -1, 1 }
-		ray_vs := projection_inverse * ray_cs
-		ray_direction := linalg.normalize((view_inverse * Vec4{ expand_values(ray_vs.xyz), 0 }).xyz)
-		s_gizmo.mouse_ray = Ray{ origin = s_gizmo.camera_position, direction = ray_direction }
-	}
-
 	s_gizmo.origin_ws = Vec4{ expand_values(translation^), 1 }
 	s_gizmo.origin_vs = view * s_gizmo.origin_ws
 	s_gizmo.origin_cs = projection * s_gizmo.origin_vs
 	s_gizmo.origin_ss = s_gizmo.origin_cs / s_gizmo.origin_cs.w
+
+	{
+		camera_position := (view_inverse * Vec4{ 0, 0, 0, 1 }).xyz
+		ray_cs := Vec4{ expand_values(mouse_position), -1, 1 }
+		ray_vs := projection_inverse * ray_cs
+		ray_direction := linalg.normalize((view_inverse * Vec4{ expand_values(ray_vs.xyz), 0 }).xyz)
+		s_gizmo.mouse_ray = Ray{ origin = camera_position, direction = ray_direction }
+	}
 
 	translation_arrow :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		line_end_ws := s_gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * GIZMO_SIZE
@@ -175,10 +167,13 @@ manipulate :: proc "contextless" (mode: Mode,
 	}
 
 	rotation_circle :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
-		segment :: proc "contextless" (start_vs: Vec4,
-					       end_vs: Vec4,
+		segment :: proc "contextless" (start_ws: Vec4,
+					       end_ws: Vec4,
 					       axis: Axis,
 					       triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+			start_vs := s_gizmo.view * start_ws
+			end_vs := s_gizmo.view * end_ws
+
 			start_cs := s_gizmo.projection * start_vs
 			end_cs := s_gizmo.projection * end_vs
 
@@ -209,20 +204,22 @@ manipulate :: proc "contextless" (mode: Mode,
 			ANGLE_STEP :: math.TAU / ROTATION_CIRCLE_SEGMENTS
 			start_angle := f32(i) * ANGLE_STEP
 			end_angle := f32(i + 1) * ANGLE_STEP
-			start_point_ws: Vec4
-			end_point_ws: Vec4
+			start_offset_ws: Vec4
+			end_offset_ws: Vec4
 			switch axis {
 			case .X:
-				start_point_ws = s_gizmo.origin_ws + Vec4{ 0, math.sin(start_angle), math.cos(start_angle), 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
-				end_point_ws = s_gizmo.origin_ws + Vec4{ 0, math.sin(end_angle), math.cos(end_angle), 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
+				start_offset_ws = Vec4{ 0, math.sin(start_angle), math.cos(start_angle), 0 }
+				end_offset_ws = Vec4{ 0, math.sin(end_angle), math.cos(end_angle), 0 }
 			case .Y:
-				start_point_ws = s_gizmo.origin_ws + Vec4{ math.sin(start_angle), 0, math.cos(start_angle), 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
-				end_point_ws = s_gizmo.origin_ws + Vec4{ math.sin(end_angle), 0, math.cos(end_angle), 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
+				start_offset_ws = Vec4{ math.sin(start_angle), 0, math.cos(start_angle), 0 }
+				end_offset_ws = Vec4{ math.sin(end_angle), 0, math.cos(end_angle), 0 }
 			case .Z:
-				start_point_ws = s_gizmo.origin_ws + Vec4{ math.cos(start_angle), math.sin(start_angle), 0, 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
-				end_point_ws = s_gizmo.origin_ws + Vec4{ math.cos(end_angle), math.sin(end_angle), 0, 0 } * (-s_gizmo.origin_vs.z * GIZMO_SIZE)
+				start_offset_ws = Vec4{ math.cos(start_angle), math.sin(start_angle), 0, 0 }
+				end_offset_ws = Vec4{ math.cos(end_angle), math.sin(end_angle), 0, 0 }
 			}
-			segment(s_gizmo.view * start_point_ws, s_gizmo.view * end_point_ws, axis, triangles)
+			start_point_ws := s_gizmo.origin_ws + start_offset_ws * -s_gizmo.origin_vs.z * GIZMO_SIZE
+			end_point_ws := s_gizmo.origin_ws + end_offset_ws * -s_gizmo.origin_vs.z * GIZMO_SIZE
+			segment(start_point_ws, end_point_ws, axis, triangles)
 		}
 	}
 
@@ -332,7 +329,6 @@ manipulate :: proc "contextless" (mode: Mode,
 		append(&s_triangle_vertices, v1, v2, v3)
 	}
 
-	s_gizmo.prev_mouse_position = mouse_position
 	return
 }
 
