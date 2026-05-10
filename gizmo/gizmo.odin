@@ -9,8 +9,6 @@ import "core:slice"
 // TODO:
 // - Scale (do circles or cubes at the ends of the lines instead of arrows).
 // - Allow to rotate via either quaternions or euler angles.
-// - Mouse picking should pick the axis that is in front.
-// - Returned draw data should be z-sorted. Z component should probably not be returned.
 // - Ability to perform operations in screen space (e. g. translate an object parallel to the screen).
 // - Gizmo size should be a parameter.
 // - Ability to perform operations in local space instead of world space.
