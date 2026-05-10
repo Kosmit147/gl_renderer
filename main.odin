@@ -103,7 +103,7 @@ main :: proc() {
 
 	gl.Enable(gl.DEPTH_TEST)
 
-	gizmo_triangles_vertex_format := []glue.Vertex_Attribute{ .Float_3, .Float_4 }
+	gizmo_triangles_vertex_format := []glue.Vertex_Attribute{ .Float_2, .Float_4 }
 
 	gizmo_triangles_va: glue.Vertex_Array
 	gizmo_triangles_vb: glue.Gl_Buffer

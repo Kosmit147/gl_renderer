@@ -337,9 +337,9 @@ manipulate :: proc "contextless" (mode: Mode,
 			color = linalg.clamp(color + Vec4(1) * highlight, Vec4(0), Vec4(1))
 		}
 
-		v1 := Triangle_Vertex{ position = { expand_values(triangle.points[0]), triangle.depth }, color = color }
-		v2 := Triangle_Vertex{ position = { expand_values(triangle.points[1]), triangle.depth }, color = color }
-		v3 := Triangle_Vertex{ position = { expand_values(triangle.points[2]), triangle.depth }, color = color }
+		v1 := Triangle_Vertex{ position = triangle.points[0], color = color }
+		v2 := Triangle_Vertex{ position = triangle.points[1], color = color }
+		v3 := Triangle_Vertex{ position = triangle.points[2], color = color }
 		append(&s_triangle_vertices, v1, v2, v3)
 	}
 
@@ -351,7 +351,7 @@ get_draw_data :: proc "contextless" () -> []Triangle_Vertex {
 }
 
 Triangle_Vertex :: struct {
-	position: Vec3,
+	position: Vec2,
 	color: Vec4,
 }
 
