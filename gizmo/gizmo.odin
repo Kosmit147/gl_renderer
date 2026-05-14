@@ -51,10 +51,10 @@ axis_vectors := [Axis]Vec3{
 }
 
 @(rodata)
-translation_plane_normals := [Axis]Vec3{
-	.X = { 0, 1, 0 },
-	.Y = { 0, 0, 1 },
-	.Z = { 0, 1, 0 },
+translation_planes_normals := [Axis][2]Vec3{
+	.X = { { 0, 1, 0 }, { 0, 0, 1 } },
+	.Y = { { 1, 0, 0 }, { 0, 0, 1 } },
+	.Z = { { 1, 0, 0 }, { 0, 1, 0 } },
 }
 
 HOVER_HIGHLIGHT    :: 0.15
@@ -70,7 +70,7 @@ Gizmo :: struct {
 	view: Mat4,
 	projection: Mat4,
 	aspect_ratio: f32,
-	mouse_ray: Ray,
+	mouse_ray_ws: Ray,
 
 	origin_ws: Vec4,
 	origin_vs: Vec4,
@@ -113,11 +113,11 @@ manipulate :: proc "contextless" (mode: Mode,
 	s_gizmo.origin_ss = s_gizmo.origin_cs / s_gizmo.origin_cs.w
 
 	{
-		camera_position := (view_inverse * Vec4{ 0, 0, 0, 1 }).xyz
+		camera_position_ws := (view_inverse * Vec4{ 0, 0, 0, 1 }).xyz
 		ray_cs := Vec4{ expand_values(mouse_position), -1, 1 }
 		ray_vs := projection_inverse * ray_cs
-		ray_direction := linalg.normalize((view_inverse * Vec4{ expand_values(ray_vs.xyz), 0 }).xyz)
-		s_gizmo.mouse_ray = Ray{ origin = camera_position, direction = ray_direction }
+		ray_direction_ws := linalg.normalize((view_inverse * Vec4{ expand_values(ray_vs.xyz), 0 }).xyz)
+		s_gizmo.mouse_ray_ws = Ray{ origin = camera_position_ws, direction = ray_direction_ws }
 	}
 
 	add_triangle :: proc "contextless" (p1, p2, p3: Vec3,
@@ -260,39 +260,55 @@ manipulate :: proc "contextless" (mode: Mode,
 	}
 	interacting := mouse_pressed && s_gizmo.selected_axis != nil
 
-	switch mode {
-	case .Translate:
-		if interacting {
+	if interacting {
+		switch mode {
+		case .Translate:
 			axis := s_gizmo.selected_axis.?
 
-			translation_plane := Plane {
-				normal = translation_plane_normals[axis],
-				point = translation^,
-			}
+			hit_point: Vec3
+			plane_hit: bool
+			min_distance_squared := max(f32)
 
-			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray, translation_plane)
+			// Get the closest point of intersection with one of the planes.
+			for plane_normal in translation_planes_normals[axis] {
+				plane := Plane {
+					normal = plane_normal,
+					point = translation^,
+				}
+				point := ray_plane_intersect(s_gizmo.mouse_ray_ws, plane) or_continue
+				distance_squared := linalg.length2(point - s_gizmo.mouse_ray_ws.origin)
+				if distance_squared <= min_distance_squared {
+					hit_point = point
+					plane_hit = true
+					min_distance_squared = distance_squared
+				}
+			}
 
 			if plane_hit {
 				if s_gizmo.original_translation == nil do s_gizmo.original_translation = translation^
 				translation_change: Vec3
 				switch axis {
 				case .X:
-					if s_gizmo.reference_translation_value == nil do s_gizmo.reference_translation_value = hit_point.x
+					if s_gizmo.reference_translation_value == nil {
+						s_gizmo.reference_translation_value = hit_point.x
+					}
 					translation_change.x = hit_point.x - s_gizmo.reference_translation_value.?
 				case .Y:
-					if s_gizmo.reference_translation_value == nil do s_gizmo.reference_translation_value = hit_point.y
+					if s_gizmo.reference_translation_value == nil {
+						s_gizmo.reference_translation_value = hit_point.y
+					}
 					translation_change.y = hit_point.y - s_gizmo.reference_translation_value.?
 				case .Z:
-					if s_gizmo.reference_translation_value == nil do s_gizmo.reference_translation_value = hit_point.z
+					if s_gizmo.reference_translation_value == nil {
+						s_gizmo.reference_translation_value = hit_point.z
+					}
 					translation_change.z = hit_point.z - s_gizmo.reference_translation_value.?
 				}
 
 				translation^ = s_gizmo.original_translation.? + translation_change
 				value_changed = true
 			}
-		}
-	case .Rotate:
-		if interacting {
+		case .Rotate:
 			axis := s_gizmo.selected_axis.?
 
 			rotation_plane := Plane {
@@ -300,7 +316,7 @@ manipulate :: proc "contextless" (mode: Mode,
 				point = translation^,
 			}
 
-			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray, rotation_plane)
+			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray_ws, rotation_plane)
 
 			if plane_hit {
 				if s_gizmo.original_rotation == nil do s_gizmo.original_rotation = rotation^
@@ -328,6 +344,8 @@ manipulate :: proc "contextless" (mode: Mode,
 	}
 
 	for triangle in triangles {
+		if interacting && triangle.axis != s_gizmo.selected_axis do continue
+
 		color := Vec4{ expand_values(axis_vectors[triangle.axis]), COLOR_ALPHA }
 		if triangle.axis == s_gizmo.selected_axis {
 			highlight: f32 = INTERACT_HIGHLIGHT if interacting else HOVER_HIGHLIGHT
