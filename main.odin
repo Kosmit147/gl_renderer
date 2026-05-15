@@ -47,6 +47,12 @@ WINDOW_TITLE  :: "GL Renderer"
 WINDOW_WIDTH  :: 1920
 WINDOW_HEIGHT :: 1080
 
+CLOSE_WINDOW_KEY    :: glue.Key.Escape
+TOGGLE_CURSOR_KEY   :: glue.Key.Left_Control
+GIZMO_TRANSLATE_KEY :: glue.Key.Q
+GIZMO_ROTATE_KEY    :: glue.Key.E
+GIZMO_SCALE_KEY     :: glue.Key.R
+
 g_context: runtime.Context
 
 // TODO: Delete
@@ -176,8 +182,13 @@ main :: proc() {
 		for event in glue.pop_event() {
 			#partial switch event in event {
 			case glue.Key_Pressed_Event:
-				if event.key == .Escape do glue.close_window()
-				else if event.key == .Left_Control do glue.set_cursor_enabled(!glue.cursor_enabled())
+				#partial switch event.key {
+				case CLOSE_WINDOW_KEY:     glue.close_window()
+				case TOGGLE_CURSOR_KEY:    glue.set_cursor_enabled(!glue.cursor_enabled())
+				case GIZMO_TRANSLATE_KEY:  gizmo_mode = .Translate
+				case GIZMO_ROTATE_KEY:     gizmo_mode = .Rotate
+				case GIZMO_SCALE_KEY:      gizmo_mode = .Scale
+				}
 			}
 		}
 
@@ -204,6 +215,14 @@ main :: proc() {
 		if imgui.ColorEdit4("Clear color", &clear_color) do set_clear_color(clear_color)
 		if imgui.ColorEdit4("Lit Color", &lit_color) do glue.set_uniform(lit_shader, COLOR_UNIFORM, lit_color)
 		if imgui.ColorEdit4("Unlit Color", &unlit_color) do glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
+		imgui.DragFloat3("Translation", &cube_translation, v_speed = 0.01)
+		{
+			v := Vec4{ cube_rotation.x, cube_rotation.y, cube_rotation.z, cube_rotation.w }
+			if imgui.DragFloat4("Rotation", &v, v_speed = 0.01) {
+				cube_rotation = linalg.normalize(quaternion(x = v.x, y = v.y, z = v.z, w = v.w))
+			}
+		}
+		imgui.DragFloat3("Scale", &cube_scale, v_speed = 0.01)
 		imgui_enum_select("Gizmo Mode", &gizmo_mode)
 		imgui.TextUnformatted(fmt.ctprintf("Camera Forward = %v", camera_vectors.forward))
 		imgui.TextUnformatted(fmt.ctprintf("TRANSLATION TRIANGLE COUNT = %v", gizmo.TRANSLATION_TRIANGLE_COUNT))
@@ -226,6 +245,7 @@ main :: proc() {
 		gizmo.manipulate(mode = gizmo_mode,
 				 translation = &cube_translation,
 				 rotation = &cube_rotation,
+				 scale = &cube_scale,
 				 mouse_position = cast(Vec2)ndc_cursor_pos,
 				 mouse_pressed = glue.mouse_button_pressed(.Left),
 				 view = view,

@@ -7,28 +7,36 @@ import "core:math/linalg"
 import "core:slice"
 
 // TODO:
-// - Scale (do circles or cubes at the ends of the lines instead of arrows).
 // - Allow to rotate via either quaternions or euler angles.
 // - Ability to perform operations in screen space (e. g. translate an object parallel to the screen).
+// - Ability to perform operations in local space.
 // - Gizmo size should be a parameter.
-// - Ability to perform operations in local space instead of world space.
 // - Support generic types instead of just f32s.
 // - Should work with any either left-handed or right-handed, y-down or y-up coordinate systems.
 // - Should work with orthographic projection.
-// - When performing an operation on one axis, visuals for other axes should disappear (e. g. when rotating along the X
-// axis, the rotation circles for Y and Z axes should disappear).
 // - Make sure it's not too slow.
+// - Visuals for rotation circles should be nicer. This could be done by only drawing half-circles on a closer
+// hemisphere of the rotation sphere.
+// - Fix gizmo still rendering when it's behind the camera.
 
 GIZMO_SIZE               :: 0.06
 LINE_THICKNESS           :: 0.004
 ARROW_WIDTH              :: 0.02
 ARROW_HEIGHT             :: 0.02
+SCALE_CIRCLE_SIZE        :: 0.013
 ROTATION_CIRCLE_SEGMENTS :: 64
+SCALE_CIRCLE_TRIANGLES   :: 16
 
-TRANSLATION_TRIANGLE_COUNT :: (2 + 1) * 3 // (Line + arrow) * 3 axes.
-ROTATION_TRIANGLE_COUNT :: ROTATION_CIRCLE_SEGMENTS * 2 * 3 // 2 triangles per segment * 3 axes.
-MAX_TRIANGLES :: max(TRANSLATION_TRIANGLE_COUNT, ROTATION_TRIANGLE_COUNT)
-MAX_TRIANGLE_VERTICES :: MAX_TRIANGLES * 3
+SCALING_SPEED :: 0.3
+
+HOVER_HIGHLIGHT    :: 0.15
+INTERACT_HIGHLIGHT :: 0.3
+
+TRANSLATION_TRIANGLE_COUNT :: (2 + 1) * 3                       // (Line + arrow) * 3 axes.
+ROTATION_TRIANGLE_COUNT    :: ROTATION_CIRCLE_SEGMENTS * 2 * 3  // 2 triangles per segment * 3 axes.
+SCALE_TRIANGLE_COUNT       :: 2 + SCALE_CIRCLE_TRIANGLES        // Line + circle
+MAX_TRIANGLES              :: max(TRANSLATION_TRIANGLE_COUNT, ROTATION_TRIANGLE_COUNT, SCALE_TRIANGLE_COUNT)
+MAX_TRIANGLE_VERTICES      :: MAX_TRIANGLES * 3
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -51,19 +59,23 @@ axis_vectors := [Axis]Vec3{
 }
 
 @(rodata)
-translation_planes_normals := [Axis][2]Vec3{
+orthogonal_planes_normals := [Axis][2]Vec3{
 	.X = { { 0, 1, 0 }, { 0, 0, 1 } },
 	.Y = { { 1, 0, 0 }, { 0, 0, 1 } },
 	.Z = { { 1, 0, 0 }, { 0, 1, 0 } },
 }
 
-HOVER_HIGHLIGHT    :: 0.15
-INTERACT_HIGHLIGHT :: 0.3
-COLOR_ALPHA        :: 0.8
+@(rodata)
+axis_colors := [Axis]Vec4{
+	.X = { 0.8,   0,   0, 1 },
+	.Y = {   0, 0.8,   0, 1 },
+	.Z = {   0,   0, 0.8, 1 },
+}
 
 Mode :: enum {
 	Translate,
 	Rotate,
+	Scale,
 }
 
 Gizmo :: struct {
@@ -83,6 +95,8 @@ Gizmo :: struct {
 	reference_translation_value: Maybe(f32),
 	original_rotation: Maybe(Quat),
 	reference_rotation_angle: Maybe(f32),
+	original_scale: Maybe(Vec3),
+	reference_scale_value: Maybe(f32),
 }
 
 @(private="file")
@@ -94,6 +108,7 @@ s_triangle_vertices: [dynamic; MAX_TRIANGLE_VERTICES]Triangle_Vertex
 manipulate :: proc "contextless" (mode: Mode,
 				  translation: ^Vec3,
 				  rotation: ^Quat,
+				  scale: ^Vec3,
 				  mouse_position: Vec2, // In NDC.
 				  mouse_pressed: bool,
 				  view: Mat4,
@@ -120,6 +135,13 @@ manipulate :: proc "contextless" (mode: Mode,
 		s_gizmo.mouse_ray_ws = Ray{ origin = camera_position_ws, direction = ray_direction_ws }
 	}
 
+	ws_to_ss :: proc "contextless" (ws: Vec4) -> Vec4 {
+		vs := s_gizmo.view * ws
+		cs := s_gizmo.projection * vs
+		ss := cs / cs.w
+		return ss
+	}
+
 	add_triangle :: proc "contextless" (p1, p2, p3: Vec3,
 					    axis: Axis,
 					    triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
@@ -130,18 +152,12 @@ manipulate :: proc "contextless" (mode: Mode,
 		})
 	}
 
-	translation_arrow :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+	translation_gizmo :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		line_end_ws := s_gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * GIZMO_SIZE
 		arrow_tip_ws := line_end_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * ARROW_HEIGHT
 
-		line_end_vs := s_gizmo.view * line_end_ws
-		arrow_tip_vs := s_gizmo.view * arrow_tip_ws
-
-		line_end_cs := s_gizmo.projection * line_end_vs
-		arrow_tip_cs := s_gizmo.projection * arrow_tip_vs
-
-		line_end_ss := line_end_cs / line_end_cs.w
-		arrow_tip_ss := arrow_tip_cs / arrow_tip_cs.w
+		line_end_ss := ws_to_ss(line_end_ws)
+		arrow_tip_ss := ws_to_ss(arrow_tip_ws)
 
 		line_direction_ss := linalg.normalize0((line_end_ss - s_gizmo.origin_ss).xy)
 		line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
@@ -175,19 +191,13 @@ manipulate :: proc "contextless" (mode: Mode,
 		}
 	}
 
-	rotation_circle :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+	rotation_gizmo :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		segment :: proc "contextless" (start_ws: Vec4,
 					       end_ws: Vec4,
 					       axis: Axis,
 					       triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
-			start_vs := s_gizmo.view * start_ws
-			end_vs := s_gizmo.view * end_ws
-
-			start_cs := s_gizmo.projection * start_vs
-			end_cs := s_gizmo.projection * end_vs
-
-			start_ss := start_cs / start_cs.w
-			end_ss := end_cs / end_cs.w
+			start_ss := ws_to_ss(start_ws)
+			end_ss := ws_to_ss(end_ws)
 
 			line_direction_ss := linalg.normalize0((end_ss - start_ss).xy)
 			line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
@@ -230,15 +240,64 @@ manipulate :: proc "contextless" (mode: Mode,
 		}
 	}
 
+	scale_gizmo :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+		line_end_ws := s_gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * GIZMO_SIZE
+		line_end_ss := ws_to_ss(line_end_ws)
+
+		line_direction_ss := linalg.normalize0((line_end_ss - s_gizmo.origin_ss).xy)
+		line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
+		line_direction_orthogonal_ss.x /= s_gizmo.aspect_ratio
+		line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
+
+		{
+			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / s_gizmo.aspect_ratio,
+				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
+				            0 }
+
+			p1 := s_gizmo.origin_ss.xyz + line_width
+			p2 := s_gizmo.origin_ss.xyz - line_width
+			p3 := line_end_ss.xyz + line_width
+			p4 := line_end_ss.xyz - line_width
+
+			add_triangle(p1, p2, p3, axis, triangles)
+			add_triangle(p4, p3, p2, axis, triangles)
+		}
+
+		for i in 0..<SCALE_CIRCLE_TRIANGLES {
+			ANGLE_STEP :: math.TAU / SCALE_CIRCLE_TRIANGLES
+			start_angle := f32(i) * ANGLE_STEP
+			end_angle := f32(i + 1) * ANGLE_STEP
+
+			start_offset_ss := Vec4{ math.sin(start_angle), math.cos(start_angle), 0, 0 }
+			end_offset_ss := Vec4{ math.sin(end_angle), math.cos(end_angle), 0, 0 }
+
+			start_offset_ss *= SCALE_CIRCLE_SIZE
+			end_offset_ss *= SCALE_CIRCLE_SIZE
+
+			start_offset_ss.x /= s_gizmo.aspect_ratio
+			end_offset_ss.x /= s_gizmo.aspect_ratio
+
+			p1 := line_end_ss.xyz
+			p2 := line_end_ss.xyz + start_offset_ss.xyz
+			p3 := line_end_ss.xyz + end_offset_ss.xyz
+
+			add_triangle(p3, p2, p1, axis, triangles)
+		}
+	}
+
 	switch mode {
 	case .Translate:
-		translation_arrow(.X, &triangles)
-		translation_arrow(.Y, &triangles)
-		translation_arrow(.Z, &triangles)
+		translation_gizmo(.X, &triangles)
+		translation_gizmo(.Y, &triangles)
+		translation_gizmo(.Z, &triangles)
 	case .Rotate:
-		rotation_circle(.X, &triangles)
-		rotation_circle(.Y, &triangles)
-		rotation_circle(.Z, &triangles)
+		rotation_gizmo(.X, &triangles)
+		rotation_gizmo(.Y, &triangles)
+		rotation_gizmo(.Z, &triangles)
+	case .Scale:
+		scale_gizmo(.X, &triangles)
+		scale_gizmo(.Y, &triangles)
+		scale_gizmo(.Z, &triangles)
 	}
 
 	{
@@ -252,6 +311,8 @@ manipulate :: proc "contextless" (mode: Mode,
 		s_gizmo.reference_translation_value = nil
 		s_gizmo.original_rotation = nil
 		s_gizmo.reference_rotation_angle = nil
+		s_gizmo.original_scale = nil
+		s_gizmo.reference_scale_value = nil
 		for triangle in triangles {
 			if point_triangle_intersect(mouse_position, triangle) {
 				s_gizmo.selected_axis = triangle.axis
@@ -270,7 +331,7 @@ manipulate :: proc "contextless" (mode: Mode,
 			min_distance_squared := max(f32)
 
 			// Get the closest point of intersection with one of the planes.
-			for plane_normal in translation_planes_normals[axis] {
+			for plane_normal in orthogonal_planes_normals[axis] {
 				plane := Plane {
 					normal = plane_normal,
 					point = translation^,
@@ -340,13 +401,59 @@ manipulate :: proc "contextless" (mode: Mode,
 				rotation^ = linalg.normalize(rotation_change * s_gizmo.original_rotation.?)
 				value_changed = true
 			}
+		case .Scale:
+			axis := s_gizmo.selected_axis.?
+
+			hit_point: Vec3
+			plane_hit: bool
+			min_distance_squared := max(f32)
+
+			// Get the closest point of intersection with one of the planes.
+			for plane_normal in orthogonal_planes_normals[axis] {
+				plane := Plane {
+					normal = plane_normal,
+					point = translation^,
+				}
+				point := ray_plane_intersect(s_gizmo.mouse_ray_ws, plane) or_continue
+				distance_squared := linalg.length2(point - s_gizmo.mouse_ray_ws.origin)
+				if distance_squared <= min_distance_squared {
+					hit_point = point
+					plane_hit = true
+					min_distance_squared = distance_squared
+				}
+			}
+
+			if plane_hit {
+				if s_gizmo.original_scale == nil do s_gizmo.original_scale = scale^
+				scale_change: Vec3
+				switch axis {
+				case .X:
+					if s_gizmo.reference_scale_value == nil {
+						s_gizmo.reference_scale_value = hit_point.x
+					}
+					scale_change.x = hit_point.x - s_gizmo.reference_scale_value.?
+				case .Y:
+					if s_gizmo.reference_scale_value == nil {
+						s_gizmo.reference_scale_value = hit_point.y
+					}
+					scale_change.y = hit_point.y - s_gizmo.reference_scale_value.?
+				case .Z:
+					if s_gizmo.reference_scale_value == nil {
+						s_gizmo.reference_scale_value = hit_point.z
+					}
+					scale_change.z = hit_point.z - s_gizmo.reference_scale_value.?
+				}
+
+				scale^ = s_gizmo.original_scale.? + scale_change * SCALING_SPEED
+				value_changed = true
+			}
 		}
 	}
 
 	for triangle in triangles {
 		if interacting && triangle.axis != s_gizmo.selected_axis do continue
 
-		color := Vec4{ expand_values(axis_vectors[triangle.axis]), COLOR_ALPHA }
+		color := axis_colors[triangle.axis]
 		if triangle.axis == s_gizmo.selected_axis {
 			highlight: f32 = INTERACT_HIGHLIGHT if interacting else HOVER_HIGHLIGHT
 			color = linalg.clamp(color + Vec4(1) * highlight, Vec4(0), Vec4(1))
