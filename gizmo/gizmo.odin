@@ -27,7 +27,7 @@ SCALE_CIRCLE_SIZE        :: 0.013
 ROTATION_CIRCLE_SEGMENTS :: 64
 SCALE_CIRCLE_TRIANGLES   :: 16
 
-SCALING_SPEED :: 0.3
+SCALING_SPEED :: 0.5
 
 HOVER_HIGHLIGHT    :: 0.15
 INTERACT_HIGHLIGHT :: 0.3
@@ -59,13 +59,6 @@ axis_vectors := [Axis]Vec3{
 }
 
 @(rodata)
-orthogonal_planes_normals := [Axis][2]Vec3{
-	.X = { { 0, 1, 0 }, { 0, 0, 1 } },
-	.Y = { { 1, 0, 0 }, { 0, 0, 1 } },
-	.Z = { { 1, 0, 0 }, { 0, 1, 0 } },
-}
-
-@(rodata)
 axis_colors := [Axis]Vec4{
 	.X = { 0.8,   0,   0, 1 },
 	.Y = {   0, 0.8,   0, 1 },
@@ -82,6 +75,7 @@ Gizmo :: struct {
 	view: Mat4,
 	projection: Mat4,
 	aspect_ratio: f32,
+	camera_forward_ws: Vec3,
 	mouse_ray_ws: Ray,
 
 	origin_ws: Vec4,
@@ -122,6 +116,7 @@ manipulate :: proc "contextless" (mode: Mode,
 	s_gizmo.view = view
 	s_gizmo.projection = projection
 	s_gizmo.aspect_ratio = projection[1, 1] / projection[0, 0]
+	s_gizmo.camera_forward_ws = Vec3{ view[2, 0], view[2, 1], view[2, 2] }
 	s_gizmo.origin_ws = Vec4{ expand_values(translation^), 1 }
 	s_gizmo.origin_vs = view * s_gizmo.origin_ws
 	s_gizmo.origin_cs = projection * s_gizmo.origin_vs
@@ -326,48 +321,45 @@ manipulate :: proc "contextless" (mode: Mode,
 		case .Translate:
 			axis := s_gizmo.selected_axis.?
 
-			hit_point: Vec3
-			plane_hit: bool
-			min_distance_squared := max(f32)
+			plane_normal := s_gizmo.camera_forward_ws
 
-			// Get the closest point of intersection with one of the planes.
-			for plane_normal in orthogonal_planes_normals[axis] {
+			switch axis {
+			case .X: plane_normal.x = 0
+			case .Y: plane_normal.y = 0
+			case .Z: plane_normal.z = 0
+			}
+
+			plane_normal = linalg.normalize0(plane_normal)
+
+			if plane_normal != Vec3(0) {
 				plane := Plane {
 					normal = plane_normal,
 					point = translation^,
 				}
-				point := ray_plane_intersect(s_gizmo.mouse_ray_ws, plane) or_continue
-				distance_squared := linalg.length2(point - s_gizmo.mouse_ray_ws.origin)
-				if distance_squared <= min_distance_squared {
-					hit_point = point
-					plane_hit = true
-					min_distance_squared = distance_squared
+				hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray_ws, plane)
+				if plane_hit {
+					if s_gizmo.original_translation == nil do s_gizmo.original_translation = translation^
+					translation_change: Vec3
+					switch axis {
+					case .X:
+						if s_gizmo.reference_translation_value == nil {
+							s_gizmo.reference_translation_value = hit_point.x
+						}
+						translation_change.x = hit_point.x - s_gizmo.reference_translation_value.?
+					case .Y:
+						if s_gizmo.reference_translation_value == nil {
+							s_gizmo.reference_translation_value = hit_point.y
+						}
+						translation_change.y = hit_point.y - s_gizmo.reference_translation_value.?
+					case .Z:
+						if s_gizmo.reference_translation_value == nil {
+							s_gizmo.reference_translation_value = hit_point.z
+						}
+						translation_change.z = hit_point.z - s_gizmo.reference_translation_value.?
+					}
+					translation^ = s_gizmo.original_translation.? + translation_change
+					value_changed = true
 				}
-			}
-
-			if plane_hit {
-				if s_gizmo.original_translation == nil do s_gizmo.original_translation = translation^
-				translation_change: Vec3
-				switch axis {
-				case .X:
-					if s_gizmo.reference_translation_value == nil {
-						s_gizmo.reference_translation_value = hit_point.x
-					}
-					translation_change.x = hit_point.x - s_gizmo.reference_translation_value.?
-				case .Y:
-					if s_gizmo.reference_translation_value == nil {
-						s_gizmo.reference_translation_value = hit_point.y
-					}
-					translation_change.y = hit_point.y - s_gizmo.reference_translation_value.?
-				case .Z:
-					if s_gizmo.reference_translation_value == nil {
-						s_gizmo.reference_translation_value = hit_point.z
-					}
-					translation_change.z = hit_point.z - s_gizmo.reference_translation_value.?
-				}
-
-				translation^ = s_gizmo.original_translation.? + translation_change
-				value_changed = true
 			}
 		case .Rotate:
 			axis := s_gizmo.selected_axis.?
@@ -404,48 +396,45 @@ manipulate :: proc "contextless" (mode: Mode,
 		case .Scale:
 			axis := s_gizmo.selected_axis.?
 
-			hit_point: Vec3
-			plane_hit: bool
-			min_distance_squared := max(f32)
+			plane_normal := s_gizmo.camera_forward_ws
 
-			// Get the closest point of intersection with one of the planes.
-			for plane_normal in orthogonal_planes_normals[axis] {
+			switch axis {
+			case .X: plane_normal.x = 0
+			case .Y: plane_normal.y = 0
+			case .Z: plane_normal.z = 0
+			}
+
+			plane_normal = linalg.normalize0(plane_normal)
+
+			if plane_normal != Vec3(0) {
 				plane := Plane {
 					normal = plane_normal,
 					point = translation^,
 				}
-				point := ray_plane_intersect(s_gizmo.mouse_ray_ws, plane) or_continue
-				distance_squared := linalg.length2(point - s_gizmo.mouse_ray_ws.origin)
-				if distance_squared <= min_distance_squared {
-					hit_point = point
-					plane_hit = true
-					min_distance_squared = distance_squared
+				hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray_ws, plane)
+				if plane_hit {
+					if s_gizmo.original_scale == nil do s_gizmo.original_scale = scale^
+					scale_change: Vec3
+					switch axis {
+					case .X:
+						if s_gizmo.reference_scale_value == nil {
+							s_gizmo.reference_scale_value = hit_point.x
+						}
+						scale_change.x = hit_point.x - s_gizmo.reference_scale_value.?
+					case .Y:
+						if s_gizmo.reference_scale_value == nil {
+							s_gizmo.reference_scale_value = hit_point.y
+						}
+						scale_change.y = hit_point.y - s_gizmo.reference_scale_value.?
+					case .Z:
+						if s_gizmo.reference_scale_value == nil {
+							s_gizmo.reference_scale_value = hit_point.z
+						}
+						scale_change.z = hit_point.z - s_gizmo.reference_scale_value.?
+					}
+					scale^ = s_gizmo.original_scale.? + scale_change * SCALING_SPEED
+					value_changed = true
 				}
-			}
-
-			if plane_hit {
-				if s_gizmo.original_scale == nil do s_gizmo.original_scale = scale^
-				scale_change: Vec3
-				switch axis {
-				case .X:
-					if s_gizmo.reference_scale_value == nil {
-						s_gizmo.reference_scale_value = hit_point.x
-					}
-					scale_change.x = hit_point.x - s_gizmo.reference_scale_value.?
-				case .Y:
-					if s_gizmo.reference_scale_value == nil {
-						s_gizmo.reference_scale_value = hit_point.y
-					}
-					scale_change.y = hit_point.y - s_gizmo.reference_scale_value.?
-				case .Z:
-					if s_gizmo.reference_scale_value == nil {
-						s_gizmo.reference_scale_value = hit_point.z
-					}
-					scale_change.z = hit_point.z - s_gizmo.reference_scale_value.?
-				}
-
-				scale^ = s_gizmo.original_scale.? + scale_change * SCALING_SPEED
-				value_changed = true
 			}
 		}
 	}
