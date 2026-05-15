@@ -137,12 +137,14 @@ manipulate :: proc "contextless" (mode: Mode,
 		return ss
 	}
 
-	add_triangle :: proc "contextless" (p1, p2, p3: Vec3,
-					    axis: Axis,
-					    triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+	add_triangle_ss :: proc "contextless" (p1, p2, p3: Vec3,
+					       axis: Axis,
+					       triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+		depth := (p1.z + p2.z + p3.z) / 3
+		if depth < -1 || depth > 1 do return
 		append(triangles, Triangle {
 			points = { p1.xy, p2.xy, p3.xy },
-			depth = (p1.z + p2.z + p3.z) / 3,
+			depth = depth,
 			axis = axis,
 		})
 	}
@@ -169,8 +171,8 @@ manipulate :: proc "contextless" (mode: Mode,
 			p3 := line_end_ss.xyz + line_width
 			p4 := line_end_ss.xyz - line_width
 
-			add_triangle(p1, p2, p3, axis, triangles)
-			add_triangle(p4, p3, p2, axis, triangles)
+			add_triangle_ss(p1, p2, p3, axis, triangles)
+			add_triangle_ss(p4, p3, p2, axis, triangles)
 		}
 
 		{
@@ -182,7 +184,7 @@ manipulate :: proc "contextless" (mode: Mode,
 			p2 := line_end_ss.xyz - arrow_width
 			p3 := arrow_tip_ss.xyz
 
-			add_triangle(p1, p2, p3, axis, triangles)
+			add_triangle_ss(p1, p2, p3, axis, triangles)
 		}
 	}
 
@@ -208,8 +210,8 @@ manipulate :: proc "contextless" (mode: Mode,
 			p3 := end_ss.xyz + line_width
 			p4 := end_ss.xyz - line_width
 
-			add_triangle(p1, p2, p3, axis, triangles)
-			add_triangle(p4, p3, p2, axis, triangles)
+			add_triangle_ss(p1, p2, p3, axis, triangles)
+			add_triangle_ss(p4, p3, p2, axis, triangles)
 		}
 
 		for i in 0..<ROTATION_CIRCLE_SEGMENTS {
@@ -254,8 +256,8 @@ manipulate :: proc "contextless" (mode: Mode,
 			p3 := line_end_ss.xyz + line_width
 			p4 := line_end_ss.xyz - line_width
 
-			add_triangle(p1, p2, p3, axis, triangles)
-			add_triangle(p4, p3, p2, axis, triangles)
+			add_triangle_ss(p1, p2, p3, axis, triangles)
+			add_triangle_ss(p4, p3, p2, axis, triangles)
 		}
 
 		for i in 0..<SCALE_CIRCLE_TRIANGLES {
@@ -276,7 +278,7 @@ manipulate :: proc "contextless" (mode: Mode,
 			p2 := line_end_ss.xyz + start_offset_ss.xyz
 			p3 := line_end_ss.xyz + end_offset_ss.xyz
 
-			add_triangle(p3, p2, p1, axis, triangles)
+			add_triangle_ss(p3, p2, p1, axis, triangles)
 		}
 	}
 
