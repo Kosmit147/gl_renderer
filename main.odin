@@ -70,7 +70,7 @@ main :: proc() {
 		defer {
 			if len(tracking_allocator.allocation_map) > 0 {
 				log.errorf("MEMORY LEAK: %v allocations not freed:",
-					   len(tracking_allocator.allocation_map))
+						   len(tracking_allocator.allocation_map))
 				for _, entry in tracking_allocator.allocation_map {
 					log.errorf("- %v bytes at %v", entry.size, entry.location)
 				}
@@ -90,12 +90,12 @@ main :: proc() {
 	monitor := glfw.GetPrimaryMonitor()
 	video_mode := glfw.GetVideoMode(monitor)
 	glfw.SetWindowMonitor(window = glue.window_handle(),
-			      monitor = monitor,
-			      xpos = 0,
-			      ypos = 0,
-			      width = video_mode.width,
-			      height = video_mode.height,
-			      refresh_rate = video_mode.refresh_rate)
+						  monitor = monitor,
+						  xpos = 0,
+						  ypos = 0,
+						  width = video_mode.width,
+						  height = video_mode.height,
+						  refresh_rate = video_mode.refresh_rate)
 
 	glue.set_cursor_enabled(false)
 	glue.set_raw_mouse_motion_enabled(true)
@@ -121,15 +121,15 @@ main :: proc() {
 	glue.bind_vertex_buffer(gizmo_triangles_va, gizmo_triangles_vb, size_of(gizmo.Triangle_Vertex))
 
 	gizmo_triangle_shader, gizmo_triangle_shader_ok := glue.create_shader(#load("shaders/gizmo_triangle.vert"),
-									      #load("shaders/gizmo_triangle.frag"))
+																		  #load("shaders/gizmo_triangle.frag"))
 	if !gizmo_triangle_shader_ok do log.panic("Failed to compile the gizmo triangle shader.")
 	defer glue.destroy_shader(gizmo_triangle_shader)
 
 	cube_mesh := glue.create_mesh(vertices = slice.to_bytes(cube_vertices[:]),
-				      vertex_stride = size_of(Vertex_3D),
-				      vertex_format = vertex_3d_format[:],
-				      indices = slice.to_bytes(cube_indices[:]),
-				      index_type = glue.gl_index(Cube_Index))
+								  vertex_stride = size_of(Vertex_3D),
+								  vertex_format = vertex_3d_format[:],
+								  indices = slice.to_bytes(cube_indices[:]),
+								  index_type = glue.gl_index(Cube_Index))
 	defer glue.destroy_mesh(&cube_mesh)
 
 	sphere_mesh, sphere_mesh_ok := glue.create_mesh_from_obj("models/sphere.obj")
@@ -240,24 +240,24 @@ main :: proc() {
 		imgui.End()
 
 		view := linalg.matrix4_look_at_from_fru(camera.position,
-							camera_vectors.forward,
-							camera_vectors.right,
-							camera_vectors.up)
+												camera_vectors.forward,
+												camera_vectors.right,
+												camera_vectors.up)
 		projection := linalg.matrix4_perspective(fovy = math.to_radians(f32(45)),
-							 aspect = glue.window_aspect_ratio(),
-							 near = 0.1,
-							 far = 1000)
+												 aspect = glue.window_aspect_ratio(),
+												 near = 0.1,
+												 far = 1000)
 
 		ndc_cursor_pos := get_normalized_cursor_position()
 		gizmo.manipulate(operation = gizmo_operation,
-				 mode = gizmo_mode,
-				 translation = &cube_translation,
-				 rotation = &cube_rotation,
-				 scale = &cube_scale,
-				 mouse_position = cast(Vec2)ndc_cursor_pos,
-				 mouse_pressed = glue.mouse_button_pressed(.Left),
-				 view = view,
-				 projection = projection)
+						 mode = gizmo_mode,
+						 translation = &cube_translation,
+						 rotation = &cube_rotation,
+						 scale = &cube_scale,
+						 mouse_position = cast(Vec2)ndc_cursor_pos,
+						 mouse_pressed = glue.mouse_button_pressed(.Left),
+						 view = view,
+						 projection = projection)
 
 		gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
 
@@ -279,9 +279,9 @@ main :: proc() {
 
 			glue.bind_mesh(cube_mesh)
 			gl.DrawElements(gl.TRIANGLES,
-					i32(cube_mesh.vertex_count),
-					cube_mesh.index_type,
-					rawptr(uintptr(cube_mesh.index_data_offset)))
+							i32(cube_mesh.vertex_count),
+							cube_mesh.index_type,
+							rawptr(uintptr(cube_mesh.index_data_offset)))
 		}
 
 		{
@@ -293,9 +293,9 @@ main :: proc() {
 
 			glue.bind_mesh(sphere_mesh)
 			gl.DrawElements(gl.TRIANGLES,
-					i32(sphere_mesh.vertex_count),
-					sphere_mesh.index_type,
-					rawptr(uintptr(sphere_mesh.index_data_offset)))
+							i32(sphere_mesh.vertex_count),
+							sphere_mesh.index_type,
+							rawptr(uintptr(sphere_mesh.index_data_offset)))
 		}
 
 		{
@@ -310,8 +310,8 @@ main :: proc() {
 			glue.use_shader(gizmo_triangle_shader)
 			glue.bind_vertex_array(gizmo_triangles_va)
 			gl.DrawArrays(gl.TRIANGLES,
-				      0,
-				      cast(i32)len(gizmo_triangle_vertices))
+						  0,
+						  cast(i32)len(gizmo_triangle_vertices))
 		}
 
 		glue.end_frame()

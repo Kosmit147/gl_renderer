@@ -107,14 +107,14 @@ gizmo: Gizmo
 triangle_vertices: [dynamic; MAX_TRIANGLE_VERTICES]Triangle_Vertex
 
 manipulate :: proc "contextless" (operation: Operation,
-				  mode: Mode,
-				  translation: ^Vec3,
-				  rotation: ^Quat,
-				  scale: ^Vec3,
-				  mouse_position: Vec2, // In NDC.
-				  mouse_pressed: bool,
-				  view: Mat4,
-				  projection: Mat4) -> (value_changed := false) {
+								  mode: Mode,
+								  translation: ^Vec3,
+								  rotation: ^Quat,
+								  scale: ^Vec3,
+								  mouse_position: Vec2, // In NDC.
+								  mouse_pressed: bool,
+								  view: Mat4,
+								  projection: Mat4) -> (value_changed := false) {
 	triangles: [dynamic; MAX_TRIANGLES]Triangle
 	clear(&triangle_vertices)
 
@@ -158,8 +158,8 @@ manipulate :: proc "contextless" (operation: Operation,
 	}
 
 	add_triangle_ss :: proc "contextless" (p1, p2, p3: Vec3,
-					       axis: Axis,
-					       triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+										   axis: Axis,
+										   triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		depth := (p1.z + p2.z + p3.z) / 3
 		if depth < MIN_DEPTH || depth > MAX_DEPTH do return
 		append(triangles, Triangle {
@@ -184,8 +184,8 @@ manipulate :: proc "contextless" (operation: Operation,
 
 		{
 			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / gizmo.aspect_ratio,
-				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
-				            0 }
+								line_direction_orthogonal_ss.y * LINE_THICKNESS,
+								0 }
 
 			p1 := gizmo.origin_ss.xyz + line_width
 			p2 := gizmo.origin_ss.xyz - line_width
@@ -198,8 +198,8 @@ manipulate :: proc "contextless" (operation: Operation,
 
 		{
 			arrow_width := Vec3{ line_direction_orthogonal_ss.x * ARROW_WIDTH / gizmo.aspect_ratio,
-				             line_direction_orthogonal_ss.y * ARROW_WIDTH,
-				             0 }
+								 line_direction_orthogonal_ss.y * ARROW_WIDTH,
+								 0 }
 
 			p1 := line_end_ss.xyz + arrow_width
 			p2 := line_end_ss.xyz - arrow_width
@@ -211,9 +211,9 @@ manipulate :: proc "contextless" (operation: Operation,
 
 	rotation_gizmo :: proc "contextless" (axis: Axis, mode: Mode, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		segment :: proc "contextless" (start_ws: Vec4,
-					       end_ws: Vec4,
-					       axis: Axis,
-					       triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+									   end_ws: Vec4,
+									   axis: Axis,
+									   triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 			start_ss := ws_to_ss(start_ws)
 			end_ss := ws_to_ss(end_ws)
 
@@ -223,8 +223,8 @@ manipulate :: proc "contextless" (operation: Operation,
 			line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
 
 			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / gizmo.aspect_ratio,
-				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
-				            0 }
+								line_direction_orthogonal_ss.y * LINE_THICKNESS,
+								0 }
 
 			p1 := start_ss.xyz + line_width
 			p2 := start_ss.xyz - line_width
@@ -270,8 +270,8 @@ manipulate :: proc "contextless" (operation: Operation,
 
 		{
 			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / gizmo.aspect_ratio,
-				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
-				            0 }
+								line_direction_orthogonal_ss.y * LINE_THICKNESS,
+								0 }
 
 			p1 := gizmo.origin_ss.xyz + line_width
 			p2 := gizmo.origin_ss.xyz - line_width
