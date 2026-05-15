@@ -17,7 +17,6 @@ import "core:slice"
 // - Make sure it's not too slow.
 // - Visuals for rotation circles should be nicer. This could be done by only drawing half-circles on a closer
 // hemisphere of the rotation sphere.
-// - Fix gizmo still rendering when it's behind the camera.
 
 GIZMO_SIZE               :: 0.06
 LINE_THICKNESS           :: 0.004
@@ -93,11 +92,8 @@ Gizmo :: struct {
 	reference_scale_value: Maybe(f32),
 }
 
-@(private="file")
-s_gizmo: Gizmo
-
-@(private="file")
-s_triangle_vertices: [dynamic; MAX_TRIANGLE_VERTICES]Triangle_Vertex
+gizmo: Gizmo
+triangle_vertices: [dynamic; MAX_TRIANGLE_VERTICES]Triangle_Vertex
 
 manipulate :: proc "contextless" (mode: Mode,
 				  translation: ^Vec3,
@@ -108,31 +104,31 @@ manipulate :: proc "contextless" (mode: Mode,
 				  view: Mat4,
 				  projection: Mat4) -> (value_changed := false) {
 	triangles: [dynamic; MAX_TRIANGLES]Triangle
-	clear(&s_triangle_vertices)
+	clear(&triangle_vertices)
 
 	view_inverse := linalg.inverse(view)
 	projection_inverse := linalg.inverse(projection)
 
-	s_gizmo.view = view
-	s_gizmo.projection = projection
-	s_gizmo.aspect_ratio = projection[1, 1] / projection[0, 0]
-	s_gizmo.camera_forward_ws = Vec3{ view[2, 0], view[2, 1], view[2, 2] }
-	s_gizmo.origin_ws = Vec4{ expand_values(translation^), 1 }
-	s_gizmo.origin_vs = view * s_gizmo.origin_ws
-	s_gizmo.origin_cs = projection * s_gizmo.origin_vs
-	s_gizmo.origin_ss = s_gizmo.origin_cs / s_gizmo.origin_cs.w
+	gizmo.view = view
+	gizmo.projection = projection
+	gizmo.aspect_ratio = projection[1, 1] / projection[0, 0]
+	gizmo.camera_forward_ws = Vec3{ view[2, 0], view[2, 1], view[2, 2] }
+	gizmo.origin_ws = Vec4{ expand_values(translation^), 1 }
+	gizmo.origin_vs = view * gizmo.origin_ws
+	gizmo.origin_cs = projection * gizmo.origin_vs
+	gizmo.origin_ss = gizmo.origin_cs / gizmo.origin_cs.w
 
 	{
 		camera_position_ws := (view_inverse * Vec4{ 0, 0, 0, 1 }).xyz
 		ray_cs := Vec4{ expand_values(mouse_position), -1, 1 }
 		ray_vs := projection_inverse * ray_cs
 		ray_direction_ws := linalg.normalize((view_inverse * Vec4{ expand_values(ray_vs.xyz), 0 }).xyz)
-		s_gizmo.mouse_ray_ws = Ray{ origin = camera_position_ws, direction = ray_direction_ws }
+		gizmo.mouse_ray_ws = Ray{ origin = camera_position_ws, direction = ray_direction_ws }
 	}
 
 	ws_to_ss :: proc "contextless" (ws: Vec4) -> Vec4 {
-		vs := s_gizmo.view * ws
-		cs := s_gizmo.projection * vs
+		vs := gizmo.view * ws
+		cs := gizmo.projection * vs
 		ss := cs / cs.w
 		return ss
 	}
@@ -150,24 +146,24 @@ manipulate :: proc "contextless" (mode: Mode,
 	}
 
 	translation_gizmo :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
-		line_end_ws := s_gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * GIZMO_SIZE
-		arrow_tip_ws := line_end_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * ARROW_HEIGHT
+		line_end_ws := gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -gizmo.origin_vs.z * GIZMO_SIZE
+		arrow_tip_ws := line_end_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -gizmo.origin_vs.z * ARROW_HEIGHT
 
 		line_end_ss := ws_to_ss(line_end_ws)
 		arrow_tip_ss := ws_to_ss(arrow_tip_ws)
 
-		line_direction_ss := linalg.normalize0((line_end_ss - s_gizmo.origin_ss).xy)
+		line_direction_ss := linalg.normalize0((line_end_ss - gizmo.origin_ss).xy)
 		line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
-		line_direction_orthogonal_ss.x /= s_gizmo.aspect_ratio
+		line_direction_orthogonal_ss.x /= gizmo.aspect_ratio
 		line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
 
 		{
-			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / s_gizmo.aspect_ratio,
+			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / gizmo.aspect_ratio,
 				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
 				            0 }
 
-			p1 := s_gizmo.origin_ss.xyz + line_width
-			p2 := s_gizmo.origin_ss.xyz - line_width
+			p1 := gizmo.origin_ss.xyz + line_width
+			p2 := gizmo.origin_ss.xyz - line_width
 			p3 := line_end_ss.xyz + line_width
 			p4 := line_end_ss.xyz - line_width
 
@@ -176,7 +172,7 @@ manipulate :: proc "contextless" (mode: Mode,
 		}
 
 		{
-			arrow_width := Vec3{ line_direction_orthogonal_ss.x * ARROW_WIDTH / s_gizmo.aspect_ratio,
+			arrow_width := Vec3{ line_direction_orthogonal_ss.x * ARROW_WIDTH / gizmo.aspect_ratio,
 				             line_direction_orthogonal_ss.y * ARROW_WIDTH,
 				             0 }
 
@@ -198,10 +194,10 @@ manipulate :: proc "contextless" (mode: Mode,
 
 			line_direction_ss := linalg.normalize0((end_ss - start_ss).xy)
 			line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
-			line_direction_orthogonal_ss.x /= s_gizmo.aspect_ratio
+			line_direction_orthogonal_ss.x /= gizmo.aspect_ratio
 			line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
 
-			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / s_gizmo.aspect_ratio,
+			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / gizmo.aspect_ratio,
 				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
 				            0 }
 
@@ -231,28 +227,28 @@ manipulate :: proc "contextless" (mode: Mode,
 				start_offset_ws = Vec4{ math.cos(start_angle), math.sin(start_angle), 0, 0 }
 				end_offset_ws = Vec4{ math.cos(end_angle), math.sin(end_angle), 0, 0 }
 			}
-			start_point_ws := s_gizmo.origin_ws + start_offset_ws * -s_gizmo.origin_vs.z * GIZMO_SIZE
-			end_point_ws := s_gizmo.origin_ws + end_offset_ws * -s_gizmo.origin_vs.z * GIZMO_SIZE
+			start_point_ws := gizmo.origin_ws + start_offset_ws * -gizmo.origin_vs.z * GIZMO_SIZE
+			end_point_ws := gizmo.origin_ws + end_offset_ws * -gizmo.origin_vs.z * GIZMO_SIZE
 			segment(start_point_ws, end_point_ws, axis, triangles)
 		}
 	}
 
 	scale_gizmo :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
-		line_end_ws := s_gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -s_gizmo.origin_vs.z * GIZMO_SIZE
+		line_end_ws := gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -gizmo.origin_vs.z * GIZMO_SIZE
 		line_end_ss := ws_to_ss(line_end_ws)
 
-		line_direction_ss := linalg.normalize0((line_end_ss - s_gizmo.origin_ss).xy)
+		line_direction_ss := linalg.normalize0((line_end_ss - gizmo.origin_ss).xy)
 		line_direction_orthogonal_ss := linalg.orthogonal(line_direction_ss)
-		line_direction_orthogonal_ss.x /= s_gizmo.aspect_ratio
+		line_direction_orthogonal_ss.x /= gizmo.aspect_ratio
 		line_direction_orthogonal_ss = linalg.normalize0(line_direction_orthogonal_ss)
 
 		{
-			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / s_gizmo.aspect_ratio,
+			line_width := Vec3{ line_direction_orthogonal_ss.x * LINE_THICKNESS / gizmo.aspect_ratio,
 				            line_direction_orthogonal_ss.y * LINE_THICKNESS,
 				            0 }
 
-			p1 := s_gizmo.origin_ss.xyz + line_width
-			p2 := s_gizmo.origin_ss.xyz - line_width
+			p1 := gizmo.origin_ss.xyz + line_width
+			p2 := gizmo.origin_ss.xyz - line_width
 			p3 := line_end_ss.xyz + line_width
 			p4 := line_end_ss.xyz - line_width
 
@@ -271,8 +267,8 @@ manipulate :: proc "contextless" (mode: Mode,
 			start_offset_ss *= SCALE_CIRCLE_SIZE
 			end_offset_ss *= SCALE_CIRCLE_SIZE
 
-			start_offset_ss.x /= s_gizmo.aspect_ratio
-			end_offset_ss.x /= s_gizmo.aspect_ratio
+			start_offset_ss.x /= gizmo.aspect_ratio
+			end_offset_ss.x /= gizmo.aspect_ratio
 
 			p1 := line_end_ss.xyz
 			p2 := line_end_ss.xyz + start_offset_ss.xyz
@@ -303,27 +299,27 @@ manipulate :: proc "contextless" (mode: Mode,
 	}
 
 	if !mouse_pressed {
-		s_gizmo.selected_axis = nil
-		s_gizmo.original_translation = nil
-		s_gizmo.reference_translation_value = nil
-		s_gizmo.original_rotation = nil
-		s_gizmo.reference_rotation_angle = nil
-		s_gizmo.original_scale = nil
-		s_gizmo.reference_scale_value = nil
+		gizmo.selected_axis = nil
+		gizmo.original_translation = nil
+		gizmo.reference_translation_value = nil
+		gizmo.original_rotation = nil
+		gizmo.reference_rotation_angle = nil
+		gizmo.original_scale = nil
+		gizmo.reference_scale_value = nil
 		for triangle in triangles {
 			if point_triangle_intersect(mouse_position, triangle) {
-				s_gizmo.selected_axis = triangle.axis
+				gizmo.selected_axis = triangle.axis
 			}
 		}
 	}
-	interacting := mouse_pressed && s_gizmo.selected_axis != nil
+	interacting := mouse_pressed && gizmo.selected_axis != nil
 
 	if interacting {
 		switch mode {
 		case .Translate:
-			axis := s_gizmo.selected_axis.?
+			axis := gizmo.selected_axis.?
 
-			plane_normal := s_gizmo.camera_forward_ws
+			plane_normal := gizmo.camera_forward_ws
 
 			switch axis {
 			case .X: plane_normal.x = 0
@@ -338,43 +334,43 @@ manipulate :: proc "contextless" (mode: Mode,
 					normal = plane_normal,
 					point = translation^,
 				}
-				hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray_ws, plane)
+				hit_point, plane_hit := ray_plane_intersect(gizmo.mouse_ray_ws, plane)
 				if plane_hit {
-					if s_gizmo.original_translation == nil do s_gizmo.original_translation = translation^
+					if gizmo.original_translation == nil do gizmo.original_translation = translation^
 					translation_change: Vec3
 					switch axis {
 					case .X:
-						if s_gizmo.reference_translation_value == nil {
-							s_gizmo.reference_translation_value = hit_point.x
+						if gizmo.reference_translation_value == nil {
+							gizmo.reference_translation_value = hit_point.x
 						}
-						translation_change.x = hit_point.x - s_gizmo.reference_translation_value.?
+						translation_change.x = hit_point.x - gizmo.reference_translation_value.?
 					case .Y:
-						if s_gizmo.reference_translation_value == nil {
-							s_gizmo.reference_translation_value = hit_point.y
+						if gizmo.reference_translation_value == nil {
+							gizmo.reference_translation_value = hit_point.y
 						}
-						translation_change.y = hit_point.y - s_gizmo.reference_translation_value.?
+						translation_change.y = hit_point.y - gizmo.reference_translation_value.?
 					case .Z:
-						if s_gizmo.reference_translation_value == nil {
-							s_gizmo.reference_translation_value = hit_point.z
+						if gizmo.reference_translation_value == nil {
+							gizmo.reference_translation_value = hit_point.z
 						}
-						translation_change.z = hit_point.z - s_gizmo.reference_translation_value.?
+						translation_change.z = hit_point.z - gizmo.reference_translation_value.?
 					}
-					translation^ = s_gizmo.original_translation.? + translation_change
+					translation^ = gizmo.original_translation.? + translation_change
 					value_changed = true
 				}
 			}
 		case .Rotate:
-			axis := s_gizmo.selected_axis.?
+			axis := gizmo.selected_axis.?
 
 			rotation_plane := Plane {
 				normal = axis_vectors[axis],
 				point = translation^,
 			}
 
-			hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray_ws, rotation_plane)
+			hit_point, plane_hit := ray_plane_intersect(gizmo.mouse_ray_ws, rotation_plane)
 
 			if plane_hit {
-				if s_gizmo.original_rotation == nil do s_gizmo.original_rotation = rotation^
+				if gizmo.original_rotation == nil do gizmo.original_rotation = rotation^
 				angle_vec: Vec2
 				switch axis {
 				case .X: angle_vec = linalg.normalize0(hit_point.yz - translation.yz)
@@ -389,16 +385,16 @@ manipulate :: proc "contextless" (mode: Mode,
 					angle = linalg.angle_between(Vec2{ -1, 0 }, angle_vec) + math.to_radians(f32(180))
 				}
 
-				if s_gizmo.reference_rotation_angle == nil do s_gizmo.reference_rotation_angle = angle
-				angle_change := angle - s_gizmo.reference_rotation_angle.?
+				if gizmo.reference_rotation_angle == nil do gizmo.reference_rotation_angle = angle
+				angle_change := angle - gizmo.reference_rotation_angle.?
 				rotation_change := linalg.quaternion_angle_axis(angle_change, axis_vectors[axis])
-				rotation^ = linalg.normalize(rotation_change * s_gizmo.original_rotation.?)
+				rotation^ = linalg.normalize(rotation_change * gizmo.original_rotation.?)
 				value_changed = true
 			}
 		case .Scale:
-			axis := s_gizmo.selected_axis.?
+			axis := gizmo.selected_axis.?
 
-			plane_normal := s_gizmo.camera_forward_ws
+			plane_normal := gizmo.camera_forward_ws
 
 			switch axis {
 			case .X: plane_normal.x = 0
@@ -413,28 +409,28 @@ manipulate :: proc "contextless" (mode: Mode,
 					normal = plane_normal,
 					point = translation^,
 				}
-				hit_point, plane_hit := ray_plane_intersect(s_gizmo.mouse_ray_ws, plane)
+				hit_point, plane_hit := ray_plane_intersect(gizmo.mouse_ray_ws, plane)
 				if plane_hit {
-					if s_gizmo.original_scale == nil do s_gizmo.original_scale = scale^
+					if gizmo.original_scale == nil do gizmo.original_scale = scale^
 					scale_change: Vec3
 					switch axis {
 					case .X:
-						if s_gizmo.reference_scale_value == nil {
-							s_gizmo.reference_scale_value = hit_point.x
+						if gizmo.reference_scale_value == nil {
+							gizmo.reference_scale_value = hit_point.x
 						}
-						scale_change.x = hit_point.x - s_gizmo.reference_scale_value.?
+						scale_change.x = hit_point.x - gizmo.reference_scale_value.?
 					case .Y:
-						if s_gizmo.reference_scale_value == nil {
-							s_gizmo.reference_scale_value = hit_point.y
+						if gizmo.reference_scale_value == nil {
+							gizmo.reference_scale_value = hit_point.y
 						}
-						scale_change.y = hit_point.y - s_gizmo.reference_scale_value.?
+						scale_change.y = hit_point.y - gizmo.reference_scale_value.?
 					case .Z:
-						if s_gizmo.reference_scale_value == nil {
-							s_gizmo.reference_scale_value = hit_point.z
+						if gizmo.reference_scale_value == nil {
+							gizmo.reference_scale_value = hit_point.z
 						}
-						scale_change.z = hit_point.z - s_gizmo.reference_scale_value.?
+						scale_change.z = hit_point.z - gizmo.reference_scale_value.?
 					}
-					scale^ = s_gizmo.original_scale.? + scale_change * SCALING_SPEED
+					scale^ = gizmo.original_scale.? + scale_change * SCALING_SPEED
 					value_changed = true
 				}
 			}
@@ -442,10 +438,10 @@ manipulate :: proc "contextless" (mode: Mode,
 	}
 
 	for triangle in triangles {
-		if interacting && triangle.axis != s_gizmo.selected_axis do continue
+		if interacting && triangle.axis != gizmo.selected_axis do continue
 
 		color := axis_colors[triangle.axis]
-		if triangle.axis == s_gizmo.selected_axis {
+		if triangle.axis == gizmo.selected_axis {
 			highlight: f32 = INTERACT_HIGHLIGHT if interacting else HOVER_HIGHLIGHT
 			color = linalg.clamp(color + Vec4(1) * highlight, Vec4(0), Vec4(1))
 		}
@@ -453,14 +449,14 @@ manipulate :: proc "contextless" (mode: Mode,
 		v1 := Triangle_Vertex{ position = triangle.points[0], color = color }
 		v2 := Triangle_Vertex{ position = triangle.points[1], color = color }
 		v3 := Triangle_Vertex{ position = triangle.points[2], color = color }
-		append(&s_triangle_vertices, v1, v2, v3)
+		append(&triangle_vertices, v1, v2, v3)
 	}
 
 	return
 }
 
 get_draw_data :: proc "contextless" () -> []Triangle_Vertex {
-	return s_triangle_vertices[:]
+	return triangle_vertices[:]
 }
 
 Triangle_Vertex :: struct {
@@ -484,7 +480,6 @@ Plane :: struct {
 	point: Vec3,
 }
 
-@(private="file")
 point_triangle_intersect :: proc "contextless" (point: Vec2, triangle: Triangle) -> bool {
 	v := triangle.points
 
@@ -503,7 +498,6 @@ point_triangle_intersect :: proc "contextless" (point: Vec2, triangle: Triangle)
 	return cross_0 >= 0 && cross_1 >= 0 && cross_2 >= 0
 }
 
-@(private="file")
 ray_plane_intersect :: proc "contextless" (ray: Ray, plane: Plane) -> (Vec3, bool) {
 	num := linalg.dot(linalg.normalize0(plane.normal), plane.point - ray.origin)
 	denom := linalg.dot(linalg.normalize0(plane.normal), linalg.normalize0(ray.direction))
