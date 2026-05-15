@@ -7,9 +7,9 @@ import "core:math/linalg"
 import "core:slice"
 
 // TODO:
+// - Local mode for rotation gizmo.
 // - Allow to rotate via either quaternions or euler angles.
 // - Ability to perform operations in screen space (e. g. translate an object parallel to the screen).
-// - Ability to perform operations in local space.
 // - Gizmo size should be a parameter.
 // - Support generic types instead of just f32s.
 // - Should work with any either left-handed or right-handed, y-down or y-up coordinate systems.
@@ -17,6 +17,7 @@ import "core:slice"
 // - Make sure it's not too slow.
 // - Visuals for rotation circles should be nicer. This could be done by only drawing half-circles on a closer
 // hemisphere of the rotation sphere.
+// - Allow to perform multiple operations at once.
 
 GIZMO_SIZE               :: 0.06
 LINE_THICKNESS           :: 0.004
@@ -26,7 +27,7 @@ SCALE_CIRCLE_SIZE        :: 0.013
 ROTATION_CIRCLE_SEGMENTS :: 64
 SCALE_CIRCLE_TRIANGLES   :: 16
 
-SCALING_SPEED :: 0.5
+SCALING_SPEED :: 0.7
 
 HOVER_HIGHLIGHT    :: 0.15
 INTERACT_HIGHLIGHT :: 0.3
@@ -36,6 +37,9 @@ ROTATION_TRIANGLE_COUNT    :: ROTATION_CIRCLE_SEGMENTS * 2 * 3  // 2 triangles p
 SCALE_TRIANGLE_COUNT       :: 2 + SCALE_CIRCLE_TRIANGLES        // Line + circle
 MAX_TRIANGLES              :: max(TRANSLATION_TRIANGLE_COUNT, ROTATION_TRIANGLE_COUNT, SCALE_TRIANGLE_COUNT)
 MAX_TRIANGLE_VERTICES      :: MAX_TRIANGLES * 3
+
+MIN_DEPTH :: -1
+MAX_DEPTH :: 1
 
 Vec2 :: [2]f32
 Vec3 :: [3]f32
@@ -51,7 +55,7 @@ Axis :: enum {
 }
 
 @(rodata)
-axis_vectors := [Axis]Vec3{
+world_axis_vectors := [Axis]Vec3{
 	.X = { 1, 0, 0 },
 	.Y = { 0, 1, 0 },
 	.Z = { 0, 0, 1 },
@@ -64,10 +68,15 @@ axis_colors := [Axis]Vec4{
 	.Z = {   0,   0, 0.8, 1 },
 }
 
-Mode :: enum {
+Operation :: enum {
 	Translate,
 	Rotate,
 	Scale,
+}
+
+Mode :: enum {
+	World,
+	Local,
 }
 
 Gizmo :: struct {
@@ -76,6 +85,8 @@ Gizmo :: struct {
 	aspect_ratio: f32,
 	camera_forward_ws: Vec3,
 	mouse_ray_ws: Ray,
+	rotation_matrix: Mat3,
+	inverse_rotation_matrix: Mat3,
 
 	origin_ws: Vec4,
 	origin_vs: Vec4,
@@ -95,7 +106,8 @@ Gizmo :: struct {
 gizmo: Gizmo
 triangle_vertices: [dynamic; MAX_TRIANGLE_VERTICES]Triangle_Vertex
 
-manipulate :: proc "contextless" (mode: Mode,
+manipulate :: proc "contextless" (operation: Operation,
+				  mode: Mode,
 				  translation: ^Vec3,
 				  rotation: ^Quat,
 				  scale: ^Vec3,
@@ -108,11 +120,14 @@ manipulate :: proc "contextless" (mode: Mode,
 
 	view_inverse := linalg.inverse(view)
 	projection_inverse := linalg.inverse(projection)
+	gizmo.rotation_matrix = linalg.matrix3_from_quaternion(rotation^)
+	gizmo.inverse_rotation_matrix = linalg.inverse(gizmo.rotation_matrix)
 
 	gizmo.view = view
 	gizmo.projection = projection
 	gizmo.aspect_ratio = projection[1, 1] / projection[0, 0]
 	gizmo.camera_forward_ws = Vec3{ view[2, 0], view[2, 1], view[2, 2] }
+
 	gizmo.origin_ws = Vec4{ expand_values(translation^), 1 }
 	gizmo.origin_vs = view * gizmo.origin_ws
 	gizmo.origin_cs = projection * gizmo.origin_vs
@@ -126,6 +141,15 @@ manipulate :: proc "contextless" (mode: Mode,
 		gizmo.mouse_ray_ws = Ray{ origin = camera_position_ws, direction = ray_direction_ws }
 	}
 
+	local_axis_vector :: proc "contextless" (axis: Axis) -> (v: Vec3) {
+		switch axis {
+		case .X: v = { gizmo.rotation_matrix[0, 0], gizmo.rotation_matrix[1, 0], gizmo.rotation_matrix[2, 0] }
+		case .Y: v = { gizmo.rotation_matrix[0, 1], gizmo.rotation_matrix[1, 1], gizmo.rotation_matrix[2, 1] }
+		case .Z: v = { gizmo.rotation_matrix[0, 2], gizmo.rotation_matrix[1, 2], gizmo.rotation_matrix[2, 2] }
+		}
+		return
+	}
+
 	ws_to_ss :: proc "contextless" (ws: Vec4) -> Vec4 {
 		vs := gizmo.view * ws
 		cs := gizmo.projection * vs
@@ -137,7 +161,7 @@ manipulate :: proc "contextless" (mode: Mode,
 					       axis: Axis,
 					       triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		depth := (p1.z + p2.z + p3.z) / 3
-		if depth < -1 || depth > 1 do return
+		if depth < MIN_DEPTH || depth > MAX_DEPTH do return
 		append(triangles, Triangle {
 			points = { p1.xy, p2.xy, p3.xy },
 			depth = depth,
@@ -145,9 +169,10 @@ manipulate :: proc "contextless" (mode: Mode,
 		})
 	}
 
-	translation_gizmo :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
-		line_end_ws := gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -gizmo.origin_vs.z * GIZMO_SIZE
-		arrow_tip_ws := line_end_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -gizmo.origin_vs.z * ARROW_HEIGHT
+	translation_gizmo :: proc "contextless" (axis: Axis, mode: Mode, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+		axis_vec := world_axis_vectors[axis] if mode == .World else local_axis_vector(axis)
+		line_end_ws := gizmo.origin_ws + Vec4{ expand_values(axis_vec), 0 } * -gizmo.origin_vs.z * GIZMO_SIZE
+		arrow_tip_ws := line_end_ws + Vec4{ expand_values(axis_vec), 0 } * -gizmo.origin_vs.z * ARROW_HEIGHT
 
 		line_end_ss := ws_to_ss(line_end_ws)
 		arrow_tip_ss := ws_to_ss(arrow_tip_ws)
@@ -184,7 +209,7 @@ manipulate :: proc "contextless" (mode: Mode,
 		}
 	}
 
-	rotation_gizmo :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+	rotation_gizmo :: proc "contextless" (axis: Axis, mode: Mode, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
 		segment :: proc "contextless" (start_ws: Vec4,
 					       end_ws: Vec4,
 					       axis: Axis,
@@ -233,8 +258,9 @@ manipulate :: proc "contextless" (mode: Mode,
 		}
 	}
 
-	scale_gizmo :: proc "contextless" (axis: Axis, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
-		line_end_ws := gizmo.origin_ws + Vec4{ expand_values(axis_vectors[axis]), 0 } * -gizmo.origin_vs.z * GIZMO_SIZE
+	scale_gizmo :: proc "contextless" (axis: Axis, mode: Mode, triangles: ^[dynamic; MAX_TRIANGLES]Triangle) {
+		axis_vec := world_axis_vectors[axis] if mode == .World else local_axis_vector(axis)
+		line_end_ws := gizmo.origin_ws + Vec4{ expand_values(axis_vec), 0 } * -gizmo.origin_vs.z * GIZMO_SIZE
 		line_end_ss := ws_to_ss(line_end_ws)
 
 		line_direction_ss := linalg.normalize0((line_end_ss - gizmo.origin_ss).xy)
@@ -278,19 +304,19 @@ manipulate :: proc "contextless" (mode: Mode,
 		}
 	}
 
-	switch mode {
+	switch operation {
 	case .Translate:
-		translation_gizmo(.X, &triangles)
-		translation_gizmo(.Y, &triangles)
-		translation_gizmo(.Z, &triangles)
+		translation_gizmo(.X, mode, &triangles)
+		translation_gizmo(.Y, mode, &triangles)
+		translation_gizmo(.Z, mode, &triangles)
 	case .Rotate:
-		rotation_gizmo(.X, &triangles)
-		rotation_gizmo(.Y, &triangles)
-		rotation_gizmo(.Z, &triangles)
+		rotation_gizmo(.X, mode, &triangles)
+		rotation_gizmo(.Y, mode, &triangles)
+		rotation_gizmo(.Z, mode, &triangles)
 	case .Scale:
-		scale_gizmo(.X, &triangles)
-		scale_gizmo(.Y, &triangles)
-		scale_gizmo(.Z, &triangles)
+		scale_gizmo(.X, mode, &triangles)
+		scale_gizmo(.Y, mode, &triangles)
+		scale_gizmo(.Z, mode, &triangles)
 	}
 
 	{
@@ -315,19 +341,13 @@ manipulate :: proc "contextless" (mode: Mode,
 	interacting := mouse_pressed && gizmo.selected_axis != nil
 
 	if interacting {
-		switch mode {
+		switch operation {
 		case .Translate:
 			axis := gizmo.selected_axis.?
+			axis_vec := world_axis_vectors[axis] if mode == .World else local_axis_vector(axis)
 
-			plane_normal := gizmo.camera_forward_ws
-
-			switch axis {
-			case .X: plane_normal.x = 0
-			case .Y: plane_normal.y = 0
-			case .Z: plane_normal.z = 0
-			}
-
-			plane_normal = linalg.normalize0(plane_normal)
+			orthogonal := linalg.cross(gizmo.camera_forward_ws, axis_vec)
+			plane_normal := linalg.cross(orthogonal, axis_vec)
 
 			if plane_normal != Vec3(0) {
 				plane := Plane {
@@ -337,6 +357,9 @@ manipulate :: proc "contextless" (mode: Mode,
 				hit_point, plane_hit := ray_plane_intersect(gizmo.mouse_ray_ws, plane)
 				if plane_hit {
 					if gizmo.original_translation == nil do gizmo.original_translation = translation^
+					if mode == .Local {
+						hit_point = gizmo.inverse_rotation_matrix * hit_point
+					}
 					translation_change: Vec3
 					switch axis {
 					case .X:
@@ -355,6 +378,9 @@ manipulate :: proc "contextless" (mode: Mode,
 						}
 						translation_change.z = hit_point.z - gizmo.reference_translation_value.?
 					}
+					if mode == .Local {
+						translation_change = gizmo.rotation_matrix * translation_change
+					}
 					translation^ = gizmo.original_translation.? + translation_change
 					value_changed = true
 				}
@@ -363,7 +389,7 @@ manipulate :: proc "contextless" (mode: Mode,
 			axis := gizmo.selected_axis.?
 
 			rotation_plane := Plane {
-				normal = axis_vectors[axis],
+				normal = world_axis_vectors[axis],
 				point = translation^,
 			}
 
@@ -387,22 +413,16 @@ manipulate :: proc "contextless" (mode: Mode,
 
 				if gizmo.reference_rotation_angle == nil do gizmo.reference_rotation_angle = angle
 				angle_change := angle - gizmo.reference_rotation_angle.?
-				rotation_change := linalg.quaternion_angle_axis(angle_change, axis_vectors[axis])
+				rotation_change := linalg.quaternion_angle_axis(angle_change, world_axis_vectors[axis])
 				rotation^ = linalg.normalize(rotation_change * gizmo.original_rotation.?)
 				value_changed = true
 			}
 		case .Scale:
 			axis := gizmo.selected_axis.?
+			axis_vec := world_axis_vectors[axis] if mode == .World else local_axis_vector(axis)
 
-			plane_normal := gizmo.camera_forward_ws
-
-			switch axis {
-			case .X: plane_normal.x = 0
-			case .Y: plane_normal.y = 0
-			case .Z: plane_normal.z = 0
-			}
-
-			plane_normal = linalg.normalize0(plane_normal)
+			orthogonal := linalg.cross(gizmo.camera_forward_ws, axis_vec)
+			plane_normal := linalg.cross(orthogonal, axis_vec)
 
 			if plane_normal != Vec3(0) {
 				plane := Plane {
@@ -412,6 +432,9 @@ manipulate :: proc "contextless" (mode: Mode,
 				hit_point, plane_hit := ray_plane_intersect(gizmo.mouse_ray_ws, plane)
 				if plane_hit {
 					if gizmo.original_scale == nil do gizmo.original_scale = scale^
+					if mode == .World {
+						hit_point = gizmo.inverse_rotation_matrix * hit_point
+					}
 					scale_change: Vec3
 					switch axis {
 					case .X:
@@ -429,6 +452,9 @@ manipulate :: proc "contextless" (mode: Mode,
 							gizmo.reference_scale_value = hit_point.z
 						}
 						scale_change.z = hit_point.z - gizmo.reference_scale_value.?
+					}
+					if mode == .World {
+						scale_change = gizmo.rotation_matrix * scale_change
 					}
 					scale^ = gizmo.original_scale.? + scale_change * SCALING_SPEED
 					value_changed = true

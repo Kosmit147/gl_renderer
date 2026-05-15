@@ -47,16 +47,16 @@ WINDOW_TITLE  :: "GL Renderer"
 WINDOW_WIDTH  :: 1920
 WINDOW_HEIGHT :: 1080
 
-CLOSE_WINDOW_KEY    :: glue.Key.Escape
-TOGGLE_CURSOR_KEY   :: glue.Key.Left_Control
-GIZMO_TRANSLATE_KEY :: glue.Key.Q
-GIZMO_ROTATE_KEY    :: glue.Key.E
-GIZMO_SCALE_KEY     :: glue.Key.R
+CLOSE_WINDOW_KEY      :: glue.Key.Escape
+TOGGLE_CURSOR_KEY     :: glue.Key.Left_Control
+GIZMO_TRANSLATE_KEY   :: glue.Key.Q
+GIZMO_ROTATE_KEY      :: glue.Key.E
+GIZMO_SCALE_KEY       :: glue.Key.R
+GIZMO_SWITCH_MODE_KEY :: glue.Key.V
 
 g_context: runtime.Context
 
 // TODO: Delete
-@(private="file")
 s_gizmo_draw_data_triangle_vertices_count: int
 
 main :: proc() {
@@ -168,7 +168,8 @@ main :: proc() {
 	cube_translation := Vec3{ 0, 0, -1 }
 	cube_rotation := Quat(1)
 	cube_scale := Vec3(1)
-	gizmo_mode := gizmo.Mode.Translate
+	gizmo_operation := gizmo.Operation.Translate
+	gizmo_mode := gizmo.Mode.World
 
 	prev_time := glue.time()
 
@@ -185,9 +186,14 @@ main :: proc() {
 				#partial switch event.key {
 				case CLOSE_WINDOW_KEY:     glue.close_window()
 				case TOGGLE_CURSOR_KEY:    glue.set_cursor_enabled(!glue.cursor_enabled())
-				case GIZMO_TRANSLATE_KEY:  gizmo_mode = .Translate
-				case GIZMO_ROTATE_KEY:     gizmo_mode = .Rotate
-				case GIZMO_SCALE_KEY:      gizmo_mode = .Scale
+				case GIZMO_TRANSLATE_KEY:  gizmo_operation = .Translate
+				case GIZMO_ROTATE_KEY:     gizmo_operation = .Rotate
+				case GIZMO_SCALE_KEY:      gizmo_operation = .Scale
+				case GIZMO_SWITCH_MODE_KEY:
+					switch gizmo_mode {
+					case .World: gizmo_mode = .Local
+					case .Local: gizmo_mode = .World
+					}
 				}
 			}
 		}
@@ -223,6 +229,7 @@ main :: proc() {
 			}
 		}
 		imgui.DragFloat3("Scale", &cube_scale, v_speed = 0.01)
+		imgui_enum_select("Gizmo Operation", &gizmo_operation)
 		imgui_enum_select("Gizmo Mode", &gizmo_mode)
 		imgui.TextUnformatted(fmt.ctprintf("Camera Forward = %v", camera_vectors.forward))
 		imgui.TextUnformatted(fmt.ctprintf("TRANSLATION TRIANGLE COUNT = %v", gizmo.TRANSLATION_TRIANGLE_COUNT))
@@ -242,7 +249,8 @@ main :: proc() {
 							 far = 1000)
 
 		ndc_cursor_pos := get_normalized_cursor_position()
-		gizmo.manipulate(mode = gizmo_mode,
+		gizmo.manipulate(operation = gizmo_operation,
+				 mode = gizmo_mode,
 				 translation = &cube_translation,
 				 rotation = &cube_rotation,
 				 scale = &cube_scale,
