@@ -453,7 +453,7 @@ manipulate :: proc "contextless" (operation: Operation,
 				hit_point, plane_hit := ray_plane_intersect(gizmo.mouse_ray_ws, plane)
 				if plane_hit {
 					if gizmo.original_scale == nil do gizmo.original_scale = scale^
-					if mode == .World {
+					if mode == .Local {
 						hit_point = gizmo.inverse_rotation_matrix * hit_point
 					}
 					scale_change: Vec3
@@ -475,7 +475,7 @@ manipulate :: proc "contextless" (operation: Operation,
 						scale_change.z = hit_point.z - gizmo.reference_scale_value.?
 					}
 					if mode == .World {
-						scale_change = gizmo.rotation_matrix * scale_change
+						scale_change = gizmo.inverse_rotation_matrix * scale_change
 					}
 					scale^ = gizmo.original_scale.? + scale_change * SCALING_SPEED
 					value_changed = true
