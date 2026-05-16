@@ -7,7 +7,6 @@ import "core:math/linalg"
 import "core:slice"
 
 // TODO:
-// - Local mode for rotation gizmo.
 // - Allow to rotate via either quaternions or euler angles.
 // - Ability to perform operations in screen space (e. g. translate an object parallel to the screen).
 // - Gizmo size should be a parameter.
@@ -17,6 +16,8 @@ import "core:slice"
 // - Make sure it's not too slow.
 // - Visuals for rotation circles should be nicer. This could be done by only drawing half-circles on a closer
 // hemisphere of the rotation sphere.
+// - Sometimes it's hard to tell what axis a rotation circle actually represents. It might be good to ass some shadow
+// effect or some other effect which would make it easier to tell.
 // - Allow to perform multiple operations at once.
 
 GIZMO_SIZE               :: 0.06
@@ -99,6 +100,8 @@ Gizmo :: struct {
 	reference_translation_value: Maybe(f32),
 	original_rotation: Maybe(Quat),
 	reference_rotation_angle: Maybe(f32),
+	original_rotation_axis_vec: Maybe(Vec3),
+	original_inverse_rotation_matrix: Maybe(Mat3),
 	original_scale: Maybe(Vec3),
 	reference_scale_value: Maybe(f32),
 }
@@ -252,6 +255,10 @@ manipulate :: proc "contextless" (operation: Operation,
 				start_offset_ws = Vec4{ math.cos(start_angle), math.sin(start_angle), 0, 0 }
 				end_offset_ws = Vec4{ math.cos(end_angle), math.sin(end_angle), 0, 0 }
 			}
+			if mode == .Local {
+				start_offset_ws = cast(Mat4)gizmo.rotation_matrix * start_offset_ws
+				end_offset_ws = cast(Mat4)gizmo.rotation_matrix * end_offset_ws
+			}
 			start_point_ws := gizmo.origin_ws + start_offset_ws * -gizmo.origin_vs.z * GIZMO_SIZE
 			end_point_ws := gizmo.origin_ws + end_offset_ws * -gizmo.origin_vs.z * GIZMO_SIZE
 			segment(start_point_ws, end_point_ws, axis, triangles)
@@ -321,7 +328,7 @@ manipulate :: proc "contextless" (operation: Operation,
 
 	{
 		context = runtime.Context{}
-		slice.sort_by(triangles[:], proc(i, j: Triangle) -> bool { return i.depth > j.depth })
+		slice.sort_by(triangles[:], proc(t1, t2: Triangle) -> bool { return t1.depth > t2.depth })
 	}
 
 	if !mouse_pressed {
@@ -330,6 +337,8 @@ manipulate :: proc "contextless" (operation: Operation,
 		gizmo.reference_translation_value = nil
 		gizmo.original_rotation = nil
 		gizmo.reference_rotation_angle = nil
+		gizmo.original_rotation_axis_vec = nil
+		gizmo.original_inverse_rotation_matrix = nil
 		gizmo.original_scale = nil
 		gizmo.reference_scale_value = nil
 		for triangle in triangles {
@@ -387,33 +396,45 @@ manipulate :: proc "contextless" (operation: Operation,
 			}
 		case .Rotate:
 			axis := gizmo.selected_axis.?
+			axis_vec := world_axis_vectors[axis] if mode == .World else local_axis_vector(axis)
 
-			rotation_plane := Plane {
-				normal = world_axis_vectors[axis],
+			plane := Plane {
+				normal = axis_vec,
 				point = translation^,
 			}
 
-			hit_point, plane_hit := ray_plane_intersect(gizmo.mouse_ray_ws, rotation_plane)
+			hit_point, plane_hit := ray_plane_intersect(gizmo.mouse_ray_ws, plane)
 
 			if plane_hit {
 				if gizmo.original_rotation == nil do gizmo.original_rotation = rotation^
+				local_hit_point := hit_point - translation^
+				if mode == .Local {
+					if gizmo.original_inverse_rotation_matrix == nil {
+						gizmo.original_inverse_rotation_matrix = gizmo.inverse_rotation_matrix
+					}
+					local_hit_point = gizmo.original_inverse_rotation_matrix.? * local_hit_point
+				}
 				angle_vec: Vec2
 				switch axis {
-				case .X: angle_vec = linalg.normalize0(hit_point.yz - translation.yz)
-				case .Y: angle_vec = linalg.normalize0(hit_point.zx - translation.zx)
-				case .Z: angle_vec = linalg.normalize0(hit_point.xy - translation.xy)
+				case .X: angle_vec = linalg.normalize0(local_hit_point.yz)
+				case .Y: angle_vec = linalg.normalize0(local_hit_point.zx)
+				case .Z: angle_vec = linalg.normalize0(local_hit_point.xy)
 				}
-
 				angle: f32
 				if angle_vec.y > 0 {
 					angle = linalg.angle_between(Vec2{ 1, 0 }, angle_vec)
 				} else {
 					angle = linalg.angle_between(Vec2{ -1, 0 }, angle_vec) + math.to_radians(f32(180))
 				}
-
 				if gizmo.reference_rotation_angle == nil do gizmo.reference_rotation_angle = angle
 				angle_change := angle - gizmo.reference_rotation_angle.?
-				rotation_change := linalg.quaternion_angle_axis(angle_change, world_axis_vectors[axis])
+				rotation_change: Quat
+				if mode == .Local {
+					if gizmo.original_rotation_axis_vec == nil do gizmo.original_rotation_axis_vec = axis_vec
+					rotation_change = linalg.quaternion_angle_axis(angle_change, gizmo.original_rotation_axis_vec.?)
+				} else {
+					rotation_change = linalg.quaternion_angle_axis(angle_change, axis_vec)
+				}
 				rotation^ = linalg.normalize(rotation_change * gizmo.original_rotation.?)
 				value_changed = true
 			}
