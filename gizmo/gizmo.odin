@@ -7,6 +7,7 @@ import "core:math/linalg"
 import "core:slice"
 
 // TODO:
+// - Uniform scaling for scale gizmo.
 // - Allow to rotate via either quaternions or euler angles.
 // - Ability to perform operations in screen space (e. g. translate an object parallel to the screen).
 // - Gizmo size should be a parameter.
