@@ -7,7 +7,6 @@ import "glue"
 import imgui "glue/vendor/imgui"
 import gl "vendor:OpenGL"
 import "gizmo"
-import "vendor:glfw"
 
 import "core:log"
 import "core:slice"
@@ -86,17 +85,7 @@ main :: proc() {
 	}
 	defer glue.deinit()
 
-	// TODO: Add fullscreen to glue.
-	monitor := glfw.GetPrimaryMonitor()
-	video_mode := glfw.GetVideoMode(monitor)
-	glfw.SetWindowMonitor(window = glue.window_handle(),
-						  monitor = monitor,
-						  xpos = 0,
-						  ypos = 0,
-						  width = video_mode.width,
-						  height = video_mode.height,
-						  refresh_rate = video_mode.refresh_rate)
-
+	glue.set_full_screen_enabled(true)
 	glue.set_cursor_enabled(false)
 	glue.set_raw_mouse_motion_enabled(true)
 
