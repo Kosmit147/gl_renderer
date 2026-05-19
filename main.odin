@@ -4,25 +4,18 @@ import "base:runtime"
 
 import "glue"
 import imgui "glue/vendor/imgui"
-import gl "vendor:OpenGL"
-import "gizmo"
 
 import "core:log"
 import "core:slice"
 import "core:math"
-import "core:math/linalg"
 import "core:mem"
 
 WINDOW_TITLE  :: "GL Renderer"
 WINDOW_WIDTH  :: 1920
 WINDOW_HEIGHT :: 1080
 
-CLOSE_WINDOW_KEY      :: glue.Key.Escape
-TOGGLE_CURSOR_KEY     :: glue.Key.Left_Control
-GIZMO_TRANSLATE_KEY   :: glue.Key.Q
-GIZMO_ROTATE_KEY      :: glue.Key.E
-GIZMO_SCALE_KEY       :: glue.Key.R
-GIZMO_SWITCH_MODE_KEY :: glue.Key.V
+CLOSE_WINDOW_KEY  :: glue.Key.Escape
+TOGGLE_CURSOR_KEY :: glue.Key.Left_Control
 
 g_context: runtime.Context
 
@@ -53,29 +46,12 @@ main :: proc() {
 	}
 	defer glue.deinit()
 
-	glue.set_full_screen_enabled(true)
 	glue.set_cursor_enabled(false)
 	glue.set_raw_mouse_motion_enabled(true)
 
 	renderer: Renderer
 	if !renderer_init(&renderer) do log.panic("Failed to initialize the renderer.")
 	defer renderer_deinit(&renderer)
-
-	gizmo_triangles_vertex_format := []glue.Vertex_Attribute{ .Float_2, .Float_4 }
-
-	gizmo_triangles_va: glue.Vertex_Array
-	gizmo_triangles_vb: glue.Gl_Buffer
-	glue.create_vertex_array(&gizmo_triangles_va)
-	defer glue.destroy_vertex_array(&gizmo_triangles_va)
-	glue.create_dynamic_gl_buffer(&gizmo_triangles_vb)
-	defer glue.destroy_gl_buffer(&gizmo_triangles_vb)
-	glue.set_vertex_array_format(gizmo_triangles_va, gizmo_triangles_vertex_format)
-	glue.bind_vertex_buffer(gizmo_triangles_va, gizmo_triangles_vb, size_of(gizmo.Triangle_Vertex))
-
-	gizmo_triangle_shader, gizmo_triangle_shader_ok := glue.create_shader(#load("shaders/gizmo_triangle.vert"),
-																		  #load("shaders/gizmo_triangle.frag"))
-	if !gizmo_triangle_shader_ok do log.panic("Failed to compile the gizmo triangle shader.")
-	defer glue.destroy_shader(gizmo_triangle_shader)
 
 	cube_mesh := glue.create_mesh(vertices = slice.to_bytes(cube_vertices[:]),
 								  vertex_stride = size_of(Vertex_3D),
@@ -115,34 +91,36 @@ main :: proc() {
 		texture_0 = &texture,
 	}
 
-	cube := Entity {
-		translation = { 0, 0, -1 },
-		rotation = 1,
-		scale = 1,
-		mesh = &cube_mesh,
-		material = &cube_material,
-	}
-
-	sphere := Entity {
-		translation = { 10, 1, 10 },
-		rotation = 1,
-		scale = 1,
-		mesh = &cube_mesh,
-		material = &cube_material,
-	}
-
 	scene: Scene
+	scene_init(&scene)
 	defer scene_destroy(scene)
-	append(&scene.entities, &cube)
-	append(&scene.entities, &sphere)
 
 	scene.camera = glue.Camera {
 		position = { 0, 0, 2 },
 		yaw = math.to_radians(f32(-90.0)),
 	}
 
-	gizmo_operation := gizmo.Operation.Translate
-	gizmo_mode := gizmo.Mode.World
+	{
+		cube := scene_add_entity(&scene, "Cube")
+		cube.translation = { 0, 0, -1 }
+		cube.rotation = 1
+		cube.scale = 1
+		cube.mesh = &cube_mesh
+		cube.material = &cube_material
+	}
+
+	{
+		sphere := scene_add_entity(&scene, "Sphere")
+		sphere.translation = { 10, 1, 10 }
+		sphere.rotation = 1
+		sphere.scale = 1
+		sphere.mesh = &sphere_mesh
+		sphere.material = &sphere_material
+	}
+
+	editor: Editor
+	if !editor_init(&editor) do log.panic("Failed to initialize the editor.")
+	defer editor_deinit(&editor)
 
 	prev_time := glue.time()
 
@@ -157,18 +135,12 @@ main :: proc() {
 			#partial switch event in event {
 			case glue.Key_Pressed_Event:
 				#partial switch event.key {
-				case CLOSE_WINDOW_KEY:     glue.close_window()
-				case TOGGLE_CURSOR_KEY:    glue.set_cursor_enabled(!glue.cursor_enabled())
-				case GIZMO_TRANSLATE_KEY:  gizmo_operation = .Translate
-				case GIZMO_ROTATE_KEY:     gizmo_operation = .Rotate
-				case GIZMO_SCALE_KEY:      gizmo_operation = .Scale
-				case GIZMO_SWITCH_MODE_KEY:
-					switch gizmo_mode {
-					case .World: gizmo_mode = .Local
-					case .Local: gizmo_mode = .World
-					}
+				case CLOSE_WINDOW_KEY:   glue.close_window()
+				case TOGGLE_CURSOR_KEY:  glue.set_cursor_enabled(!glue.cursor_enabled())
 				}
 			}
+
+			editor_on_event(&editor, event)
 		}
 
 		if !glue.cursor_enabled() {
@@ -190,51 +162,18 @@ main :: proc() {
 		if glue.key_pressed(.A) do scene.camera.position -= camera_vectors.right   * movement_speed * dt
 		if glue.key_pressed(.D) do scene.camera.position += camera_vectors.right   * movement_speed * dt
 
-		editor(scene)
+		editor_ui(&editor, &scene)
 
 		imgui.Begin("Window")
 		imgui.ColorEdit4("Clear Color", &renderer.clear_color)
 		if imgui.ColorEdit4("Lit Color", &lit_color) do glue.set_uniform(lit_shader, COLOR_UNIFORM, lit_color)
 		if imgui.ColorEdit4("Unlit Color", &unlit_color) do glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
-		imgui_enum_select("Gizmo Operation", &gizmo_operation)
-		imgui_enum_select("Gizmo Mode", &gizmo_mode)
 		imgui.End()
 
-		ndc_cursor_pos := get_normalized_cursor_position()
-		gizmo.manipulate(operation = gizmo_operation,
-						 mode = gizmo_mode,
-						 translation = &cube.translation,
-						 rotation = &cube.rotation,
-						 scale = &cube.scale,
-						 mouse_position = cast(Vec2)ndc_cursor_pos,
-						 mouse_pressed = glue.mouse_button_pressed(.Left),
-						 view = camera_view(scene.camera),
-						 projection = camera_projection(scene.camera))
-
 		renderer_render_scene(renderer, scene)
-
-		{
-			gl.Disable(gl.DEPTH_TEST)
-			defer gl.Enable(gl.DEPTH_TEST)
-
-			gizmo_triangle_vertices := gizmo.get_draw_data()
-			glue.upload_dynamic_gl_buffer_data(&gizmo_triangles_vb, slice.to_bytes(gizmo_triangle_vertices[:]))
-			glue.use_shader(gizmo_triangle_shader)
-			glue.bind_vertex_array(gizmo_triangles_va)
-			gl.DrawArrays(gl.TRIANGLES,
-						  0,
-						  cast(i32)len(gizmo_triangle_vertices))
-		}
+		editor_render(&editor)
 
 		glue.end_frame()
 		free_all(context.temp_allocator)
 	}
-}
-
-get_normalized_cursor_position :: proc() -> [2]f64 {
-	pos := glue.cursor_position()
-	window_size := cast([2]f64)glue.window_size()
-	pos = pos / window_size * 2 - 1
-	pos.y = -pos.y
-	return pos
 }

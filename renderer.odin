@@ -71,7 +71,7 @@ renderer_render_scene :: proc(renderer: Renderer, scene: Scene) {
 	glue.upload_static_gl_buffer_data(renderer.camera_buffer, mem.ptr_to_bytes(&camera_buffer_data))
 
 	for entity in scene.entities {
-		renderer_render_entity(entity^)
+		renderer_render_entity(entity)
 	}
 }
 
