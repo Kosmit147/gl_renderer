@@ -6,7 +6,7 @@ layout (location = 2) in vec2 in_uv;
 
 out vec2 UV;
 
-layout (std140, binding = 0) uniform MVP {
+layout (std140, binding = 0) uniform Camera {
 	mat4 view;
 	mat4 projection;
 };
