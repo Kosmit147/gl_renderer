@@ -190,18 +190,12 @@ main :: proc() {
 		if glue.key_pressed(.A) do scene.camera.position -= camera_vectors.right   * movement_speed * dt
 		if glue.key_pressed(.D) do scene.camera.position += camera_vectors.right   * movement_speed * dt
 
+		editor(scene)
+
 		imgui.Begin("Window")
 		imgui.ColorEdit4("Clear Color", &renderer.clear_color)
 		if imgui.ColorEdit4("Lit Color", &lit_color) do glue.set_uniform(lit_shader, COLOR_UNIFORM, lit_color)
 		if imgui.ColorEdit4("Unlit Color", &unlit_color) do glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
-		imgui.DragFloat3("Translation", &cube.translation, v_speed = 0.01)
-		{
-			v := Vec4{ cube.rotation.x, cube.rotation.y, cube.rotation.z, cube.rotation.w }
-			if imgui.DragFloat4("Rotation", &v, v_speed = 0.01) {
-				cube.rotation = linalg.normalize(quaternion(x = v.x, y = v.y, z = v.z, w = v.w))
-			}
-		}
-		imgui.DragFloat3("Scale", &cube.scale, v_speed = 0.01)
 		imgui_enum_select("Gizmo Operation", &gizmo_operation)
 		imgui_enum_select("Gizmo Mode", &gizmo_mode)
 		imgui.End()
