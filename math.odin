@@ -1,5 +1,9 @@
 package gl_renderer
 
+WORLD_UP      :: Vec3{ 0, 1, 0 }
+WORLD_DOWN    :: Vec3{ 0, -1, 0 }
+WORLD_FORWARD :: Vec3{ 0, 0, -1 }
+
 Vec2 :: [2]f32
 Vec3 :: [3]f32
 Vec4 :: [4]f32

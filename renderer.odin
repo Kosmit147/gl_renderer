@@ -30,8 +30,18 @@ Camera_Buffer_Data :: struct {
 	projection: Mat4,
 }
 
+Light_Buffer_Data :: struct {
+	light_ambient: Vec3,
+	_: [4]byte,
+	light_direction: Vec3,
+	_: [4]byte,
+	light_diffuse: Vec3,
+	_: [4]byte,
+}
+
 Renderer :: struct {
 	camera_buffer: glue.Gl_Buffer,
+	light_buffer: glue.Gl_Buffer,
 	clear_color: Vec4,
 }
 
@@ -50,6 +60,18 @@ renderer_init :: proc(renderer: ^Renderer) -> (ok := false) {
 	glue.create_static_gl_buffer(&renderer.camera_buffer, size_of(Camera_Buffer_Data))
 	defer if !ok do glue.destroy_gl_buffer(&renderer.camera_buffer)
 	glue.bind_uniform_buffer(renderer.camera_buffer, 0)
+
+	glue.create_static_gl_buffer(&renderer.light_buffer, size_of(Light_Buffer_Data))
+	defer if !ok do glue.destroy_gl_buffer(&renderer.light_buffer)
+	glue.bind_shader_storage_buffer(renderer.light_buffer, 1)
+
+	light_buffer_data := Light_Buffer_Data {
+		light_ambient = Vec3{ 0.1, 0.1, 0.1 },
+		light_direction = WORLD_DOWN,
+		light_diffuse = { 0.7, 0.7, 0.7 },
+	}
+
+	glue.upload_static_gl_buffer_data(renderer.light_buffer, mem.ptr_to_bytes(&light_buffer_data))
 
 	ok = true
 	return
