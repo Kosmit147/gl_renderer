@@ -14,6 +14,8 @@ GIZMO_ROTATE_KEY    :: glue.Key.E
 GIZMO_SCALE_KEY     :: glue.Key.R
 
 Editor :: struct {
+	selected_entity_index: Maybe(uint),
+
 	gizmo_operation: gizmo.Operation,
 	gizmo_mode: gizmo.Mode,
 
@@ -63,37 +65,43 @@ editor_on_event :: proc(editor: ^Editor, event: glue.Event) {
 }
 
 editor_ui :: proc(editor: ^Editor, scene: ^Scene) {
-	remove_entity_index: Maybe(uint)
+	if editor.selected_entity_index != nil && editor.selected_entity_index.? >= len(scene.entities) {
+		editor.selected_entity_index = nil
+	}
 
 	if imgui.Begin("Entities") {
-		imgui_enum_select("Gizmo Operation", &editor.gizmo_operation)
-		imgui_enum_select("Gizmo Mode", &editor.gizmo_mode)
 		for &entity, i in scene.entities {
-			label_string := fmt.ctprintf("%v##%v", cstring(raw_data(&entity.name)), entity.id)
-			if imgui.TreeNode(label_string) {
-				imgui.TextUnformatted(fmt.ctprintf("id: %v", entity.id))
-				edit_transform(&entity.translation, &entity.rotation, &entity.scale)
-				if imgui.Button("Delete") do remove_entity_index = uint(i)
-				imgui.TreePop()
-			}
+			entity_label := fmt.ctprintf("%v##%v", cstring(raw_data(&entity.name)), entity.id)
+			is_selected := editor.selected_entity_index != nil && editor.selected_entity_index.? == uint(i)
+			if imgui.Selectable(entity_label, is_selected) do editor.selected_entity_index = uint(i)
 		}
 		imgui.End()
 	}
 
-	if remove_entity_index != nil do scene_remove_entity(scene, remove_entity_index.?)
+	remove_selected := false
 
-	if len(scene.entities) != 0 {
-		entity := &scene.entities[0]
-		gizmo.manipulate(operation = editor.gizmo_operation,
-						 mode = editor.gizmo_mode,
-						 translation = &entity.translation,
-						 rotation = &entity.rotation,
-						 scale = &entity.scale,
-						 mouse_position = cast(Vec2)get_normalized_cursor_position(),
-						 mouse_pressed = glue.mouse_button_pressed(.Left),
-						 view = camera_view(scene.camera),
-						 projection = camera_projection(scene.camera))
+	if imgui.Begin("Inspector") {
+		imgui_enum_select("Gizmo Operation", &editor.gizmo_operation)
+		imgui_enum_select("Gizmo Mode", &editor.gizmo_mode)
+		if editor.selected_entity_index != nil {
+			entity := &scene.entities[editor.selected_entity_index.?]
+			imgui.TextUnformatted(fmt.ctprintf("id: %v", entity.id))
+			if imgui.Button("Delete") do remove_selected = true
+			edit_transform(&entity.translation, &entity.rotation, &entity.scale)
+			gizmo.manipulate(operation = editor.gizmo_operation,
+							 mode = editor.gizmo_mode,
+							 translation = &entity.translation,
+							 rotation = &entity.rotation,
+							 scale = &entity.scale,
+							 mouse_position = cast(Vec2)get_normalized_cursor_position(),
+							 mouse_pressed = glue.mouse_button_pressed(.Left),
+							 view = camera_view(scene.camera),
+							 projection = camera_projection(scene.camera))
+		}
+		imgui.End()
 	}
+
+	if remove_selected do scene_remove_entity(scene, editor.selected_entity_index.?)
 }
 
 editor_render :: proc(editor: ^Editor) {
