@@ -69,11 +69,23 @@ editor_ui :: proc(editor: ^Editor, scene: ^Scene) {
 		editor.selected_entity_index = nil
 	}
 
-	if imgui.Begin("Entities") {
-		for &entity, i in scene.entities {
-			entity_label := fmt.ctprintf("%v##%v", cstring(raw_data(&entity.name)), entity.id)
-			is_selected := editor.selected_entity_index != nil && editor.selected_entity_index.? == uint(i)
-			if imgui.Selectable(entity_label, is_selected) do editor.selected_entity_index = uint(i)
+	if imgui.Begin("Objects") {
+		if imgui.BeginTabBar("Objects Tab Bar") {
+			if imgui.BeginTabItem("Entities") {
+				for &entity, i in scene.entities {
+					entity_label := fmt.ctprintf("%v##%v", cstring(raw_data(&entity.name)), entity.id)
+					is_selected := editor.selected_entity_index != nil && editor.selected_entity_index.? == uint(i)
+					if imgui.Selectable(entity_label, is_selected) do editor.selected_entity_index = uint(i)
+				}
+				imgui.EndTabItem()
+			} else {
+				editor.selected_entity_index = nil
+			}
+			if imgui.BeginTabItem("Light") {
+				edit_directional_light(editor^, scene^, &scene.directional_light)
+				imgui.EndTabItem()
+			}
+			imgui.EndTabBar()
 		}
 		imgui.End()
 	}
@@ -118,14 +130,46 @@ editor_render :: proc(editor: ^Editor) {
 }
 
 edit_transform :: proc(translation: ^Vec3, rotation: ^Quat, scale: ^Vec3) -> (value_changed := false) {
-	if imgui.DragFloat3("Translation", translation, v_speed = 0.01) do value_changed = true
+	value_changed ||= edit_translation(translation)
+	value_changed ||= edit_rotation(rotation)
+	value_changed ||= edit_scale(scale)
+	return
+}
+
+edit_translation :: proc(translation: ^Vec3) -> (value_changed := false) {
+	value_changed ||= imgui.DragFloat3("Translation", translation, v_speed = 0.01)
+	return
+}
+
+edit_rotation :: proc(rotation: ^Quat) -> (value_changed := false) {
 	rotation_v := Vec4{ rotation.x, rotation.y, rotation.z, rotation.w }
 	if imgui.DragFloat4("Rotation", &rotation_v, v_speed = 0.01) {
 		rotation^ = linalg.normalize(quaternion(x = rotation_v.x, y = rotation_v.y, z = rotation_v.z, w = rotation_v.w))
 		value_changed = true
 	}
-	if imgui.DragFloat3("Scale", scale, v_speed = 0.01) do value_changed = true
 	return
+}
+
+edit_scale :: proc(scale: ^Vec3) -> (value_changed := false) {
+	value_changed ||= imgui.DragFloat3("Scale", scale, v_speed = 0.01)
+	return
+}
+
+edit_directional_light :: proc(editor: Editor, scene: Scene, light: ^Directional_Light) {
+	imgui.ColorEdit3("Ambient", &light.ambient)
+	imgui.ColorEdit3("Diffuse", &light.diffuse)
+	edit_translation(&light.translation)
+	edit_rotation(&light.rotation)
+	unused_scale := Vec3(1)
+	gizmo.manipulate(operation = editor.gizmo_operation,
+					 mode = editor.gizmo_mode,
+					 translation = &light.translation,
+					 rotation = &light.rotation,
+					 scale = &unused_scale,
+					 mouse_position = cast(Vec2)get_normalized_cursor_position(),
+					 mouse_pressed = glue.mouse_button_pressed(.Left),
+					 view = camera_view(scene.camera),
+					 projection = camera_projection(scene.camera))
 }
 
 get_normalized_cursor_position :: proc() -> [2]f64 {

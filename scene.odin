@@ -7,10 +7,18 @@ Scene :: struct {
 	camera: Camera,
 	entities: [dynamic]Entity,
 	next_entity_id: uint,
+
+	directional_light: Directional_Light,
 }
 
 scene_init :: proc(scene: ^Scene) {
 	scene.entities = make([dynamic]Entity, context.allocator)
+	scene.directional_light = {
+		translation = 0,
+		rotation = 1,
+		ambient = 0.1,
+		diffuse = 0.7,
+	}
 }
 
 scene_destroy :: proc(scene: Scene) {

@@ -65,20 +65,13 @@ renderer_init :: proc(renderer: ^Renderer) -> (ok := false) {
 	defer if !ok do glue.destroy_gl_buffer(&renderer.light_buffer)
 	glue.bind_shader_storage_buffer(renderer.light_buffer, 1)
 
-	light_buffer_data := Light_Buffer_Data {
-		light_ambient = Vec3{ 0.1, 0.1, 0.1 },
-		light_direction = WORLD_DOWN,
-		light_diffuse = { 0.7, 0.7, 0.7 },
-	}
-
-	glue.upload_static_gl_buffer_data(renderer.light_buffer, mem.ptr_to_bytes(&light_buffer_data))
-
 	ok = true
 	return
 }
 
 renderer_deinit :: proc(renderer: ^Renderer) {
 	glue.destroy_gl_buffer(&renderer.camera_buffer)
+	glue.destroy_gl_buffer(&renderer.light_buffer)
 }
 
 renderer_render_scene :: proc(renderer: Renderer, scene: Scene, asset_cache: Asset_Cache) {
@@ -91,6 +84,14 @@ renderer_render_scene :: proc(renderer: Renderer, scene: Scene, asset_cache: Ass
 	}
 
 	glue.upload_static_gl_buffer_data(renderer.camera_buffer, mem.ptr_to_bytes(&camera_buffer_data))
+
+	light_buffer_data := Light_Buffer_Data {
+		light_ambient = scene.directional_light.ambient,
+		light_direction = linalg.matrix3_from_quaternion(scene.directional_light.rotation) * WORLD_FORWARD,
+		light_diffuse = scene.directional_light.diffuse,
+	}
+
+	glue.upload_static_gl_buffer_data(renderer.light_buffer, mem.ptr_to_bytes(&light_buffer_data))
 
 	for entity in scene.entities do renderer_render_entity(entity, asset_cache)
 }
