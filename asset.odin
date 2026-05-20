@@ -20,16 +20,20 @@ Shader_Id   :: distinct uint
 Mesh_Id     :: distinct uint
 Texture_Id  :: distinct uint
 
+ERROR_MATERIAL :: 0
 LIT_MATERIAL   :: 1
 UNLIT_MATERIAL :: 2
 
+ERROR_SHADER :: 0
 LIT_SHADER   :: 1
 UNLIT_SHADER :: 2
 
+ERROR_MESH   :: 0
 CUBE_MESH    :: 1
 SPHERE_MESH  :: 2
 CAPSULE_MESH :: 3
 
+ERROR_TEXTURE       :: 0
 WHITE_TEXTURE       :: 1
 BLACK_TEXTURE       :: 2
 TRANSPARENT_TEXTURE :: 3
@@ -69,6 +73,10 @@ asset_cache_init :: proc(cache: ^Asset_Cache) -> (ok := false) {
 	}
 
 	{
+		cache.materials[ERROR_MATERIAL] = Material {
+			shader = ERROR_SHADER,
+			texture_0 = ERROR_TEXTURE,
+		}
 		cache.materials[LIT_MATERIAL] = Material {
 			shader = LIT_SHADER,
 			texture_0 = WHITE_TEXTURE,
@@ -80,13 +88,21 @@ asset_cache_init :: proc(cache: ^Asset_Cache) -> (ok := false) {
 	}
 
 	{
+		error_shader := glue.create_shader(#load("shaders/error.vert"), #load("shaders/error.frag")) or_return
 		lit_shader := glue.create_shader(#load("shaders/lit.vert"), #load("shaders/lit.frag")) or_return
 		unlit_shader := glue.create_shader(#load("shaders/unlit.vert"), #load("shaders/unlit.frag")) or_return
+		cache.shaders[ERROR_SHADER] = error_shader
 		cache.shaders[LIT_SHADER] = lit_shader
 		cache.shaders[UNLIT_SHADER] = unlit_shader
 	}
 
 	{
+		// TODO: Error mesh should be a 3D "ERROR" text.
+		error_mesh := glue.create_mesh(vertices = slice.to_bytes(cube_vertices[:]),
+									   vertex_stride = size_of(Vertex_3D),
+									   vertex_format = vertex_3d_format[:],
+									   indices = slice.to_bytes(cube_indices[:]),
+									   index_type = glue.gl_index(Cube_Index))
 		cube_mesh := glue.create_mesh(vertices = slice.to_bytes(cube_vertices[:]),
 									  vertex_stride = size_of(Vertex_3D),
 									  vertex_format = vertex_3d_format[:],
@@ -94,13 +110,14 @@ asset_cache_init :: proc(cache: ^Asset_Cache) -> (ok := false) {
 									  index_type = glue.gl_index(Cube_Index))
 		sphere_mesh := glue.create_mesh_from_obj("models/sphere.obj") or_return
 		capsule_mesh := glue.create_mesh_from_obj("models/capsule.obj") or_return
+		cache.meshes[ERROR_MESH] = error_mesh
 		cache.meshes[CUBE_MESH] = cube_mesh
 		cache.meshes[SPHERE_MESH] = sphere_mesh
 		cache.meshes[CAPSULE_MESH] = capsule_mesh
 	}
 
 	{
-		builtin_texture_parameters := glue.Texture_Parameters {
+		texture_parameters := glue.Texture_Parameters {
 			wrap_s = gl.REPEAT,
 			wrap_t = gl.REPEAT,
 			min_filter = gl.NEAREST,
@@ -108,15 +125,17 @@ asset_cache_init :: proc(cache: ^Asset_Cache) -> (ok := false) {
 			internal_format = gl.RGBA8,
 		}
 
+		error_texture_pixels := []u8{ 255, 0, 255, 255 }
 		white_texture_pixels := []u8{ 255, 255, 255, 255 }
 		black_texture_pixels := []u8{ 0, 0, 0, 255 }
 		transparent_texture_pixels := []u8{ 255, 255, 255, 0 }
-		cache.textures[WHITE_TEXTURE] = glue.create_texture(1, 1, 4, white_texture_pixels, builtin_texture_parameters)
-		cache.textures[BLACK_TEXTURE] = glue.create_texture(1, 1, 4, black_texture_pixels, builtin_texture_parameters)
+		cache.textures[ERROR_TEXTURE] = glue.create_texture(1, 1, 4, error_texture_pixels, texture_parameters)
+		cache.textures[WHITE_TEXTURE] = glue.create_texture(1, 1, 4, white_texture_pixels, texture_parameters)
+		cache.textures[BLACK_TEXTURE] = glue.create_texture(1, 1, 4, black_texture_pixels, texture_parameters)
 		cache.textures[TRANSPARENT_TEXTURE] = glue.create_texture(1, 1,
 																  4,
 																  transparent_texture_pixels,
-																  builtin_texture_parameters)
+																  texture_parameters)
 	}
 
 	cache.next_material_id = 1001
@@ -152,6 +171,22 @@ asset_cache_get_mesh :: proc(cache: Asset_Cache, id: Mesh_Id) -> (Mesh, bool) {
 }
 
 asset_cache_get_texture :: proc(cache: Asset_Cache, id: Texture_Id) -> (Texture, bool) {
+	return cache.textures[id]
+}
+
+asset_cache_get_material_builtin :: proc(cache: Asset_Cache, id: Material_Id) -> Material {
+	return cache.materials[id]
+}
+
+asset_cache_get_shader_builtin :: proc(cache: Asset_Cache, id: Shader_Id) -> Shader {
+	return cache.shaders[id]
+}
+
+asset_cache_get_mesh_builtin :: proc(cache: Asset_Cache, id: Mesh_Id) -> Mesh {
+	return cache.meshes[id]
+}
+
+asset_cache_get_texture_builtin :: proc(cache: Asset_Cache, id: Texture_Id) -> Texture {
 	return cache.textures[id]
 }
 

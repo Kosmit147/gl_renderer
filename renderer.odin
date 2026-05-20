@@ -74,10 +74,10 @@ renderer_render_scene :: proc(renderer: Renderer, scene: Scene, asset_cache: Ass
 }
 
 renderer_render_entity :: proc(entity: Entity, asset_cache: Asset_Cache) -> (ok := false) {
-	material := asset_cache_get_material(asset_cache, entity.material) or_return
-	shader := asset_cache_get_shader(asset_cache, material.shader) or_return
-	texture_0 := asset_cache_get_texture(asset_cache, material.texture_0) or_return
-	mesh := asset_cache_get_mesh(asset_cache, entity.mesh) or_return
+	material := asset_cache_get_material(asset_cache, entity.material) or_else asset_cache_get_material_builtin(asset_cache, ERROR_MATERIAL)
+	shader := asset_cache_get_shader(asset_cache, material.shader) or_else asset_cache_get_shader_builtin(asset_cache, ERROR_SHADER)
+	texture_0 := asset_cache_get_texture(asset_cache, material.texture_0) or_else asset_cache_get_texture_builtin(asset_cache, ERROR_TEXTURE)
+	mesh := asset_cache_get_mesh(asset_cache, entity.mesh) or_else asset_cache_get_mesh_builtin(asset_cache, ERROR_MESH)
 
 	glue.use_shader(shader)
 	glue.bind_texture(texture_0, 0)

@@ -74,12 +74,20 @@ main :: proc() {
 	}
 
 	{
+		container_texture, texture_ok := glue.create_texture_from_jpeg_in_memory(#load("textures/container.jpg"))
+		ensure(texture_ok)
+		container_texture_id := asset_cache_add_texture(&asset_cache, container_texture)
+		cube_material := Material {
+			shader = LIT_SHADER,
+			texture_0 = container_texture_id,
+		}
+		cube_material_id := asset_cache_add_material(&asset_cache, cube_material)
 		cube := scene_add_entity(&scene, "Cube")
 		cube.translation = { 0, 0, -1 }
 		cube.rotation = 1
 		cube.scale = 1
 		cube.mesh = CUBE_MESH
-		cube.material = LIT_MATERIAL
+		cube.material = cube_material_id
 	}
 
 	{
