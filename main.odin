@@ -6,7 +6,6 @@ import "glue"
 import imgui "glue/vendor/imgui"
 
 import "core:log"
-import "core:slice"
 import "core:math"
 import "core:mem"
 
@@ -53,43 +52,17 @@ main :: proc() {
 	if !renderer_init(&renderer) do log.panic("Failed to initialize the renderer.")
 	defer renderer_deinit(&renderer)
 
-	cube_mesh := glue.create_mesh(vertices = slice.to_bytes(cube_vertices[:]),
-								  vertex_stride = size_of(Vertex_3D),
-								  vertex_format = vertex_3d_format[:],
-								  indices = slice.to_bytes(cube_indices[:]),
-								  index_type = glue.gl_index(Cube_Index))
-	defer glue.destroy_mesh(&cube_mesh)
+	asset_cache: Asset_Cache
+	if !asset_cache_init(&asset_cache) do log.panic("Failed to initialize the asset cache.")
+	defer asset_cache_deinit(asset_cache)
 
-	sphere_mesh, sphere_mesh_ok := glue.create_mesh_from_obj("models/sphere.obj")
-	if !sphere_mesh_ok do log.panic("Failed to load the sphere model.")
-	defer glue.destroy_mesh(&sphere_mesh)
-
-	texture, texture_ok := glue.create_texture_from_jpeg_in_memory(#load("textures/container.jpg"))
-	if !texture_ok do log.panic("Failed to create the texture.")
-	defer glue.destroy_texture(&texture)
-
-	lit_shader, lit_shader_ok := glue.create_shader(#load("shaders/lit.vert"), #load("shaders/lit.frag"))
-	if !lit_shader_ok do log.panic("Failed to compile the lit shader.")
-	defer glue.destroy_shader(lit_shader)
-
-	unlit_shader, unlit_shader_ok := glue.create_shader(#load("shaders/unlit.vert"), #load("shaders/unlit.frag"))
-	if !unlit_shader_ok do log.panic("Failed to compile the unlit shader.")
-	defer glue.destroy_shader(unlit_shader)
+	lit_shader, _ := asset_cache_get_shader(asset_cache, LIT_SHADER)
+	unlit_shader, _ := asset_cache_get_shader(asset_cache, UNLIT_SHADER)
 
 	lit_color := glue.WHITE
 	unlit_color := glue.WHITE
 	glue.set_uniform(lit_shader, COLOR_UNIFORM, lit_color)
 	glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
-
-	cube_material := Material {
-		shader = &lit_shader,
-		texture_0 = &texture,
-	}
-
-	sphere_material := Material {
-		shader = &unlit_shader,
-		texture_0 = &texture,
-	}
 
 	scene: Scene
 	scene_init(&scene)
@@ -105,8 +78,8 @@ main :: proc() {
 		cube.translation = { 0, 0, -1 }
 		cube.rotation = 1
 		cube.scale = 1
-		cube.mesh = &cube_mesh
-		cube.material = &cube_material
+		cube.mesh = CUBE_MESH
+		cube.material = LIT_MATERIAL
 	}
 
 	{
@@ -114,8 +87,8 @@ main :: proc() {
 		sphere.translation = { 10, 1, 10 }
 		sphere.rotation = 1
 		sphere.scale = 1
-		sphere.mesh = &sphere_mesh
-		sphere.material = &sphere_material
+		sphere.mesh = SPHERE_MESH
+		sphere.material = UNLIT_MATERIAL
 	}
 
 	editor: Editor
@@ -170,7 +143,7 @@ main :: proc() {
 		if imgui.ColorEdit4("Unlit Color", &unlit_color) do glue.set_uniform(unlit_shader, COLOR_UNIFORM, unlit_color)
 		imgui.End()
 
-		renderer_render_scene(renderer, scene)
+		renderer_render_scene(renderer, scene, asset_cache)
 		editor_render(&editor)
 
 		glue.end_frame()

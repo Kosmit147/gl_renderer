@@ -59,7 +59,7 @@ renderer_deinit :: proc(renderer: ^Renderer) {
 	glue.destroy_gl_buffer(&renderer.camera_buffer)
 }
 
-renderer_render_scene :: proc(renderer: Renderer, scene: Scene) {
+renderer_render_scene :: proc(renderer: Renderer, scene: Scene, asset_cache: Asset_Cache) {
 	gl.ClearColor(expand_values(renderer.clear_color))
 	gl.Clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT)
 
@@ -70,24 +70,30 @@ renderer_render_scene :: proc(renderer: Renderer, scene: Scene) {
 
 	glue.upload_static_gl_buffer_data(renderer.camera_buffer, mem.ptr_to_bytes(&camera_buffer_data))
 
-	for entity in scene.entities {
-		renderer_render_entity(entity)
-	}
+	for entity in scene.entities do renderer_render_entity(entity, asset_cache)
 }
 
-renderer_render_entity :: proc(entity: Entity) {
-	glue.use_shader(entity.material.shader^)
-	glue.bind_texture(entity.material.texture_0^, 0)
+renderer_render_entity :: proc(entity: Entity, asset_cache: Asset_Cache) -> (ok := false) {
+	material := asset_cache_get_material(asset_cache, entity.material) or_return
+	shader := asset_cache_get_shader(asset_cache, material.shader) or_return
+	texture_0 := asset_cache_get_texture(asset_cache, material.texture_0) or_return
+	mesh := asset_cache_get_mesh(asset_cache, entity.mesh) or_return
+
+	glue.use_shader(shader)
+	glue.bind_texture(texture_0, 0)
 
 	translation := linalg.matrix4_translate(entity.translation)
 	rotation := linalg.matrix4_from_quaternion(entity.rotation)
 	scale := linalg.matrix4_scale(entity.scale)
 	model := translation * rotation * scale
-	glue.set_uniform(entity.material.shader^, MODEL_UNIFORM, model)
+	glue.set_uniform(shader, MODEL_UNIFORM, model)
 
-	glue.bind_mesh(entity.mesh^)
+	glue.bind_mesh(mesh)
 	gl.DrawElements(gl.TRIANGLES,
-					i32(entity.mesh.vertex_count),
-					entity.mesh.index_type,
-					rawptr(uintptr(entity.mesh.index_data_offset)))
+					i32(mesh.vertex_count),
+					mesh.index_type,
+					rawptr(uintptr(mesh.index_data_offset)))
+
+	ok = true
+	return
 }

@@ -21,6 +21,7 @@ scene_add_entity :: proc(scene: ^Scene, name: string) -> ^Entity {
 	new_entity: Entity
 	new_entity.id = scene.next_entity_id
 	fmt.bprintf(new_entity.name[:], "%v%v", name, rune(0))
+	slice.last_ptr(new_entity.name[:])^ = 0
 	scene.next_entity_id += 1
 	append(&scene.entities, new_entity)
 	return slice.last_ptr(scene.entities[:])
@@ -36,6 +37,6 @@ Entity :: struct {
 	translation: Vec3,
 	rotation: Quat,
 	scale: Vec3,
-	mesh: ^Mesh,
-	material: ^Material,
+	mesh: Mesh_Id,
+	material: Material_Id,
 }
