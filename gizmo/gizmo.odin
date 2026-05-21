@@ -109,6 +109,7 @@ Gizmo :: struct {
 
 gizmo: Gizmo
 triangle_vertices: [dynamic; MAX_TRIANGLE_VERTICES]Triangle_Vertex
+_manipulate_called: bool
 
 manipulate :: proc "contextless" (operation: Operation,
 								  mode: Mode,
@@ -121,6 +122,7 @@ manipulate :: proc "contextless" (operation: Operation,
 								  projection: Mat4) -> (value_changed := false) {
 	triangles: [dynamic; MAX_TRIANGLES]Triangle
 	clear(&triangle_vertices)
+	_manipulate_called = true
 
 	view_inverse := linalg.inverse(view)
 	projection_inverse := linalg.inverse(projection)
@@ -504,7 +506,8 @@ manipulate :: proc "contextless" (operation: Operation,
 }
 
 get_draw_data :: proc "contextless" () -> []Triangle_Vertex {
-	return triangle_vertices[:]
+	defer _manipulate_called = false
+	return triangle_vertices[:] if _manipulate_called else nil
 }
 
 Triangle_Vertex :: struct {
