@@ -122,20 +122,29 @@ asset_cache_init :: proc(cache: ^Asset_Cache) -> (ok := false) {
 			wrap_t = gl.REPEAT,
 			min_filter = gl.NEAREST,
 			mag_filter = gl.NEAREST,
-			internal_format = gl.RGBA8,
 		}
+		internal_format: u32 = gl.RGBA8
 
 		error_texture_pixels := []u8{ 255, 0, 255, 255 }
 		white_texture_pixels := []u8{ 255, 255, 255, 255 }
 		black_texture_pixels := []u8{ 0, 0, 0, 255 }
 		transparent_texture_pixels := []u8{ 255, 255, 255, 0 }
-		cache.textures[ERROR_TEXTURE] = glue.create_texture(1, 1, 4, error_texture_pixels, texture_parameters)
-		cache.textures[WHITE_TEXTURE] = glue.create_texture(1, 1, 4, white_texture_pixels, texture_parameters)
-		cache.textures[BLACK_TEXTURE] = glue.create_texture(1, 1, 4, black_texture_pixels, texture_parameters)
-		cache.textures[TRANSPARENT_TEXTURE] = glue.create_texture(1, 1,
-																  4,
-																  transparent_texture_pixels,
-																  texture_parameters)
+		cache.textures[ERROR_TEXTURE] = glue.create_texture_from_pixels(width = 1, height = 1, channels = 4,
+																		pixels = error_texture_pixels,
+																		internal_format = internal_format,
+																		texture_parameters = texture_parameters)
+		cache.textures[WHITE_TEXTURE] = glue.create_texture_from_pixels(width = 1, height = 1, channels = 4,
+																		pixels = white_texture_pixels,
+																		internal_format = internal_format,
+																		texture_parameters = texture_parameters)
+		cache.textures[BLACK_TEXTURE] = glue.create_texture_from_pixels(width = 1, height = 1, channels = 4,
+																		pixels = black_texture_pixels,
+																		internal_format = internal_format,
+																		texture_parameters = texture_parameters)
+		cache.textures[TRANSPARENT_TEXTURE] = glue.create_texture_from_pixels(width = 1, height = 1, channels = 4,
+																			  pixels = transparent_texture_pixels,
+																			  internal_format = internal_format,
+																			  texture_parameters = texture_parameters)
 	}
 
 	cache.next_material_id = 1001
