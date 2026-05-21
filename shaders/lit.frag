@@ -9,5 +9,5 @@ layout (location = 5) uniform vec4 color;
 layout (binding = 0) uniform sampler2D texture0;
 
 void main() {
-	out_color = vec4(AmbientDiffuse, 1.0) * texture(texture0, UV) * color;
+  out_color = vec4(AmbientDiffuse, 1.0) * texture(texture0, UV) * color;
 }
