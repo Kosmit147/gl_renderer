@@ -24,9 +24,10 @@ ERROR_MATERIAL :: 0
 LIT_MATERIAL   :: 1
 UNLIT_MATERIAL :: 2
 
-ERROR_SHADER :: 0
-LIT_SHADER   :: 1
-UNLIT_SHADER :: 2
+ERROR_SHADER       :: 0
+LIT_SHADER         :: 1
+UNLIT_SHADER       :: 2
+POSTPROCESS_SHADER :: 3
 
 ERROR_MESH   :: 0
 CUBE_MESH    :: 1
@@ -91,9 +92,11 @@ asset_cache_init :: proc(cache: ^Asset_Cache) -> (ok := false) {
 		error_shader := glue.create_shader(#load("shaders/error.vert"), #load("shaders/error.frag")) or_return
 		lit_shader := glue.create_shader(#load("shaders/lit.vert"), #load("shaders/lit.frag")) or_return
 		unlit_shader := glue.create_shader(#load("shaders/unlit.vert"), #load("shaders/unlit.frag")) or_return
+		postprocess_shader := glue.create_shader(#load("shaders/postprocess.vert"), #load("shaders/postprocess.frag")) or_return
 		cache.shaders[ERROR_SHADER] = error_shader
 		cache.shaders[LIT_SHADER] = lit_shader
 		cache.shaders[UNLIT_SHADER] = unlit_shader
+		cache.shaders[POSTPROCESS_SHADER] = postprocess_shader
 	}
 
 	{

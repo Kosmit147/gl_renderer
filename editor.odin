@@ -117,10 +117,12 @@ editor_ui :: proc(editor: ^Editor, scene: ^Scene) {
 }
 
 editor_render :: proc(editor: ^Editor) {
+	gizmo_vertices := gizmo.get_draw_data()
+	if len(gizmo_vertices) == 0 do return
+
 	gl.Disable(gl.DEPTH_TEST)
 	defer gl.Enable(gl.DEPTH_TEST)
 
-	gizmo_vertices := gizmo.get_draw_data()
 	glue.upload_dynamic_gl_buffer_data(&editor.gizmo_vb, slice.to_bytes(gizmo_vertices[:]))
 	glue.use_shader(editor.gizmo_shader)
 	glue.bind_vertex_array(editor.gizmo_va)

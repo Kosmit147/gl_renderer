@@ -40,7 +40,11 @@ main :: proc() {
 
 	g_context = context
 
-	if !glue.init(WINDOW_WIDTH, WINDOW_HEIGHT, WINDOW_TITLE, maximized = true, vsync = false, fps_limit = 260) {
+	if !glue.init(WINDOW_WIDTH, WINDOW_HEIGHT,
+				  WINDOW_TITLE,
+				  maximized = true,
+				  vsync = false,
+				  fps_limit = 260) {
 		log.panic("Failed to create a window")
 	}
 	defer glue.deinit()
