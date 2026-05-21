@@ -92,11 +92,20 @@ main :: proc() {
 
 	{
 		sphere := scene_add_entity(&scene, "Sphere")
-		sphere.translation = { 10, 1, 10 }
+		sphere.translation = { 3, 1, 3 }
 		sphere.rotation = 1
-		sphere.scale = 1
+		sphere.scale = 0.5
 		sphere.mesh = SPHERE_MESH
-		sphere.material = UNLIT_MATERIAL
+		sphere.material = LIT_MATERIAL
+	}
+
+	{
+		ground := scene_add_entity(&scene, "Ground")
+		ground.translation = { 0, -2, 0 }
+		ground.rotation = 1
+		ground.scale = { 13, 1, 13 }
+		ground.mesh = CUBE_MESH
+		ground.material = LIT_MATERIAL
 	}
 
 	editor: Editor
@@ -135,7 +144,7 @@ main :: proc() {
 		camera_vectors := glue.camera_vectors(scene.camera)
 
 		BASE_MOVEMENT_SPEED :: 0.3
-		SPRINT_MOVEMENT_SPEED :: 2
+		SPRINT_MOVEMENT_SPEED :: 3
 		movement_speed: f32 = BASE_MOVEMENT_SPEED
 		if glue.key_pressed(.Left_Shift) do movement_speed = SPRINT_MOVEMENT_SPEED
 		if glue.key_pressed(.W) do scene.camera.position += camera_vectors.forward * movement_speed * dt
